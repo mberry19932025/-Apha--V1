@@ -46,6 +46,8 @@ This saves CSV files into `backend/data/`. For static hosting, copy the download
 
 For the fastest live workflow, download a CSV named like `AAPL.csv`, open the dashboard, and use **Update Market Data > Upload CSV**.
 
+Bundled watchlist CSVs currently cover `AAPL`, `MSFT`, `NVDA`, `TSLA`, `SPY`, and `QQQ` from 2021-08-02 through 2026-07-31.
+
 ## Structure
 
 - `frontend/` — React + Vite static dashboard and browser bot engine
