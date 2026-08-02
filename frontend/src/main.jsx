@@ -14,6 +14,7 @@ import {
   strategies,
   symbols
 } from "./botEngine.js";
+import { projectCapabilities, projectTests } from "./projectSpec.js";
 import "./styles.css";
 
 const portfolioKey = "apex-alpha-static-portfolio";
@@ -115,6 +116,15 @@ function App() {
       }),
     [backtestForm, dataBySymbol]
   );
+  const selfTests = useMemo(
+    () =>
+      projectTests.map((test) => ({
+        ...test,
+        passed: test.run({ backtest, dataStatus, portfolio, scanner, strategyComparison })
+      })),
+    [backtest, dataStatus, portfolio, scanner, strategyComparison]
+  );
+  const passedTests = selfTests.filter((test) => test.passed).length;
 
   useEffect(() => {
     async function init() {
@@ -299,6 +309,42 @@ function App() {
           <small>Top Setup</small>
           <strong>{bestSetup ? `${bestSetup.symbol} · ${bestSetup.score}` : "Scanning"}</strong>
         </div>
+      </section>
+
+      <section className="brief-grid">
+        <article className="card">
+          <div className="card-header">
+            <h2>PDF Project Brief</h2>
+            <span className="pill buy">V1</span>
+          </div>
+          <div className="brief-list">
+            {projectCapabilities.map((capability) => (
+              <div className="brief-item" key={capability}>
+                <span className="checkmark">✓</span>
+                <span>{capability}</span>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="card">
+          <div className="card-header">
+            <h2>Self Tests</h2>
+            <span className="pill hold">
+              {passedTests}/{selfTests.length}
+            </span>
+          </div>
+          <div className="brief-list">
+            {selfTests.map((test) => (
+              <div className="brief-item" key={test.id}>
+                <span className={test.passed ? "checkmark" : "xmark"}>
+                  {test.passed ? "✓" : "!"}
+                </span>
+                <span>{test.label}</span>
+              </div>
+            ))}
+          </div>
+        </article>
       </section>
 
       <section className="scanner-grid">

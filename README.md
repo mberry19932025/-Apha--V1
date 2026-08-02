@@ -11,6 +11,7 @@ This project is intentionally safe by default: it simulates paper trades in the 
 - Moving-average crossover backtesting with configurable cash, windows, lookback, and risk.
 - Strategy selector with MA crossover, RSI reversion, MACD trend, and buy-and-hold benchmark.
 - Strategy comparison table for the selected symbol.
+- PDF-derived project brief and in-app self tests to preserve V1 requirements.
 - Paper order ticket with buy/sell validation.
 - Paper portfolio with equity, exposure, realized P/L, positions, and recent trades saved in browser storage.
 - Dashboard panels for scanner rankings, backtest results, market quotes, signals, and portfolio state.
@@ -49,6 +50,8 @@ This saves CSV files into `backend/data/`. For static hosting, copy the download
 For the fastest live workflow, download a CSV named like `AAPL.csv`, open the dashboard, and use **Update Market Data > Upload CSV**.
 
 Bundled watchlist CSVs currently cover `AAPL`, `MSFT`, `NVDA`, `TSLA`, `SPY`, and `QQQ` from 2021-08-02 through 2026-07-31.
+
+The durable Version 1 project memory from the PDF is saved in `docs/apex-alpha-v1-pdf-spec.md`.
 
 ## Structure
 
