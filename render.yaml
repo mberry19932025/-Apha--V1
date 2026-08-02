@@ -1,24 +1,7 @@
 services:
   - type: web
-    name: tradebot-api
-    runtime: node
-    rootDir: backend
-    buildCommand: npm install
-    startCommand: npm start
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: PORT
-        value: 10000
-      - key: TRADING_MODE
-        value: paper
-
-  - type: web
-    name: tradebot-frontend
+    name: apex-alpha-static
     runtime: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
-    envVars:
-      - key: VITE_API_URL
-        value: https://tradebot-api.onrender.com

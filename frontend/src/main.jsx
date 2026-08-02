@@ -1,8 +1,20 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  buildPortfolio,
+  createInitialPortfolio,
+  getDataStatus,
+  getMarketSnapshot,
+  getSignals,
+  loadBundledData,
+  placePaperTrade,
+  runBacktest,
+  scanMarket,
+  symbols
+} from "./botEngine.js";
 import "./styles.css";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+const portfolioKey = "apex-alpha-static-portfolio";
 
 function formatMoney(value) {
   return new Intl.NumberFormat("en-US", {
@@ -36,17 +48,23 @@ function buildPath(points) {
     .join(" ");
 }
 
+function loadStoredPortfolio() {
+  try {
+    const stored = localStorage.getItem(portfolioKey);
+    return stored ? JSON.parse(stored) : createInitialPortfolio();
+  } catch {
+    return createInitialPortfolio();
+  }
+}
+
 function App() {
-  const [health, setHealth] = useState(null);
-  const [market, setMarket] = useState([]);
-  const [signals, setSignals] = useState([]);
+  const [dataBySymbol, setDataBySymbol] = useState({});
+  const [market, setMarket] = useState(() => getMarketSnapshot());
   const [scanner, setScanner] = useState(null);
-  const [dataStatus, setDataStatus] = useState([]);
-  const [portfolio, setPortfolio] = useState(null);
+  const [portfolioState, setPortfolioState] = useState(loadStoredPortfolio);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [backtestLoading, setBacktestLoading] = useState(false);
-
   const [tradeForm, setTradeForm] = useState({ symbol: "AAPL", side: "buy", quantity: 1 });
   const [backtestForm, setBacktestForm] = useState({
     symbol: "SPY",
@@ -58,131 +76,92 @@ function App() {
   });
   const [backtest, setBacktest] = useState(null);
 
-  async function loadCore() {
-    setLoading(true);
-    try {
-      const [healthRes, marketRes, signalsRes, portfolioRes, dataStatusRes] = await Promise.all([
-        fetch(`${API_URL}/api/health`),
-        fetch(`${API_URL}/api/market`),
-        fetch(`${API_URL}/api/signals`),
-        fetch(`${API_URL}/api/portfolio`),
-        fetch(`${API_URL}/api/data/status`)
-      ]);
-
-      if (!healthRes.ok || !marketRes.ok || !signalsRes.ok || !portfolioRes.ok || !dataStatusRes.ok) {
-        throw new Error("API request failed.");
-      }
-
-      setHealth(await healthRes.json());
-      setMarket((await marketRes.json()).quotes);
-      setSignals((await signalsRes.json()).signals);
-      setPortfolio(await portfolioRes.json());
-      setDataStatus((await dataStatusRes.json()).symbols);
-      setMessage("");
-    } catch (error) {
-      setMessage(`Could not connect to backend: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function loadInitial() {
-    await loadCore();
-    await runBacktest();
-  }
-
-  useEffect(() => {
-    loadInitial();
-    const timer = setInterval(loadCore, 15000);
-    return () => clearInterval(timer);
-  }, []);
-
+  const signals = useMemo(() => getSignals(market), [market]);
+  const portfolio = useMemo(() => buildPortfolio(portfolioState, market), [portfolioState, market]);
+  const dataStatus = useMemo(() => getDataStatus(dataBySymbol), [dataBySymbol]);
   const selectedSignal = useMemo(
     () => signals.find((signal) => signal.symbol === tradeForm.symbol),
     [signals, tradeForm.symbol]
   );
-
   const bestSetup = scanner?.results?.[0];
   const equityPath = buildPath(backtest?.equityCurve || []);
+
+  useEffect(() => {
+    async function init() {
+      const bundledData = await loadBundledData();
+      setDataBySymbol(bundledData);
+      setBacktest(runBacktest(backtestForm, bundledData));
+      setScanner(
+        scanMarket(
+          {
+            ...backtestForm,
+            riskPercent: Number(backtestForm.riskPercent) / 100
+          },
+          bundledData,
+          market
+        )
+      );
+      setLoading(false);
+    }
+
+    init();
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(portfolioKey, JSON.stringify(portfolioState));
+  }, [portfolioState]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setMarket(getMarketSnapshot());
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []);
 
   function syncSymbol(symbol) {
     setTradeForm((current) => ({ ...current, symbol }));
     setBacktestForm((current) => ({ ...current, symbol }));
   }
 
-  async function submitTrade(event) {
+  function submitTrade(event) {
     event.preventDefault();
     setMessage("");
 
     try {
-      const res = await fetch(`${API_URL}/api/trades`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(tradeForm)
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Trade failed.");
-      }
-
-      setPortfolio(data.portfolio);
+      setPortfolioState((current) => placePaperTrade(current, market, tradeForm));
       setMessage(`${tradeForm.side.toUpperCase()} filled: ${tradeForm.quantity} ${tradeForm.symbol}.`);
     } catch (error) {
       setMessage(error.message);
     }
   }
 
-  async function runBacktest(event) {
+  function runBacktestFromForm(event) {
     event?.preventDefault();
     setMessage("");
     setBacktestLoading(true);
 
-    const params = new URLSearchParams({
-      symbol: backtestForm.symbol,
-      startingCash: String(backtestForm.startingCash),
-      shortWindow: String(backtestForm.shortWindow),
-      longWindow: String(backtestForm.longWindow),
-      lookbackDays: String(backtestForm.lookbackDays),
-      riskPercent: String(Number(backtestForm.riskPercent) / 100)
-    });
+    const config = {
+      ...backtestForm,
+      riskPercent: Number(backtestForm.riskPercent) / 100
+    };
 
-    try {
-      const [backtestRes, scannerRes] = await Promise.all([
-        fetch(`${API_URL}/api/backtest?${params.toString()}`),
-        fetch(`${API_URL}/api/scanner?${params.toString()}`)
-      ]);
-
-      if (!backtestRes.ok || !scannerRes.ok) {
-        throw new Error("Backtest failed.");
-      }
-
-      setBacktest(await backtestRes.json());
-      setScanner(await scannerRes.json());
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setBacktestLoading(false);
-    }
+    setBacktest(runBacktest(config, dataBySymbol));
+    setScanner(scanMarket(config, dataBySymbol, market));
+    setBacktestLoading(false);
   }
 
-  async function resetPortfolio() {
-    setMessage("");
-    try {
-      const res = await fetch(`${API_URL}/api/portfolio/reset`, { method: "POST" });
-      if (!res.ok) {
-        throw new Error("Reset failed.");
-      }
-      setPortfolio(await res.json());
-      setMessage("Paper portfolio reset.");
-    } catch (error) {
-      setMessage(error.message);
-    }
+  function resetPortfolio() {
+    setPortfolioState(createInitialPortfolio());
+    setMessage("Paper portfolio reset.");
   }
 
   function useScanPick(result) {
     syncSymbol(result.symbol);
-    setTradeForm({ symbol: result.symbol, side: result.action === "sell" ? "sell" : "buy", quantity: result.suggestedQuantity });
+    setTradeForm({
+      symbol: result.symbol,
+      side: result.action === "sell" ? "sell" : "buy",
+      quantity: result.suggestedQuantity
+    });
     setBacktestForm((current) => ({ ...current, symbol: result.symbol }));
   }
 
@@ -190,17 +169,17 @@ function App() {
     <main className="app">
       <section className="hero">
         <div>
-          <p className="eyebrow">Local Paper Bot</p>
+          <p className="eyebrow">Static Paper Bot</p>
           <h1>Apex Alpha AI</h1>
           <p className="lede">
-            Scan, backtest, paper trade, and monitor risk from one local dashboard.
+            Scan, backtest, paper trade, and monitor risk without a paid backend.
           </p>
         </div>
         <div className="status-card">
-          <span className={health?.ok ? "dot online" : "dot"} />
+          <span className="dot online" />
           <div>
-            <strong>{health?.ok ? "API Online" : "API Offline"}</strong>
-            <small>{health?.mode || "paper"} mode</small>
+            <strong>Static App Ready</strong>
+            <small>browser paper mode</small>
           </div>
         </div>
       </section>
@@ -210,17 +189,17 @@ function App() {
       <section className="summary-strip">
         <div>
           <small>Portfolio Equity</small>
-          <strong>{formatMoney(portfolio?.equity)}</strong>
+          <strong>{formatMoney(portfolio.equity)}</strong>
         </div>
         <div>
           <small>Total Return</small>
-          <strong className={portfolio?.totalReturn >= 0 ? "gain" : "loss"}>
-            {formatMoney(portfolio?.totalReturn)} · {formatPercent(portfolio?.totalReturnPercent)}
+          <strong className={portfolio.totalReturn >= 0 ? "gain" : "loss"}>
+            {formatMoney(portfolio.totalReturn)} · {formatPercent(portfolio.totalReturnPercent)}
           </strong>
         </div>
         <div>
           <small>Market Exposure</small>
-          <strong>{formatMoney(portfolio?.exposure)} · {formatPercent(portfolio?.exposurePercent)}</strong>
+          <strong>{formatMoney(portfolio.exposure)} · {formatPercent(portfolio.exposurePercent)}</strong>
         </div>
         <div>
           <small>Top Setup</small>
@@ -232,7 +211,7 @@ function App() {
         <article className="card">
           <div className="card-header">
             <h2>Market Scanner</h2>
-            <button type="button" className="secondary" onClick={runBacktest} disabled={backtestLoading}>
+            <button type="button" className="secondary" onClick={runBacktestFromForm} disabled={backtestLoading}>
               Refresh
             </button>
           </div>
@@ -262,12 +241,9 @@ function App() {
           <form onSubmit={submitTrade} className="trade-form">
             <label>
               Symbol
-              <select
-                value={tradeForm.symbol}
-                onChange={(event) => syncSymbol(event.target.value)}
-              >
-                {market.map((quote) => (
-                  <option key={quote.symbol}>{quote.symbol}</option>
+              <select value={tradeForm.symbol} onChange={(event) => syncSymbol(event.target.value)}>
+                {symbols.map((symbol) => (
+                  <option key={symbol}>{symbol}</option>
                 ))}
               </select>
             </label>
@@ -311,15 +287,12 @@ function App() {
       <section className="backtest-layout">
         <article className="card">
           <h2>Backtest Control</h2>
-          <form onSubmit={runBacktest} className="trade-form">
+          <form onSubmit={runBacktestFromForm} className="trade-form">
             <label>
               Symbol
-              <select
-                value={backtestForm.symbol}
-                onChange={(event) => syncSymbol(event.target.value)}
-              >
-                {market.map((quote) => (
-                  <option key={quote.symbol}>{quote.symbol}</option>
+              <select value={backtestForm.symbol} onChange={(event) => syncSymbol(event.target.value)}>
+                {symbols.map((symbol) => (
+                  <option key={symbol}>{symbol}</option>
                 ))}
               </select>
             </label>
@@ -482,7 +455,7 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {portfolio?.positions?.length ? (
+              {portfolio.positions.length ? (
                 portfolio.positions.map((position) => (
                   <tr key={position.symbol}>
                     <td>{position.symbol}</td>
@@ -516,7 +489,7 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {portfolio?.trades?.length ? (
+              {portfolio.trades.length ? (
                 portfolio.trades.map((trade) => (
                   <tr key={trade.id}>
                     <td>{new Date(trade.createdAt).toLocaleTimeString()}</td>
