@@ -9,6 +9,8 @@ This project is intentionally safe by default: it simulates paper trades in the 
 - Static browser app with no paid backend required.
 - Local market scanner for supported symbols.
 - Moving-average crossover backtesting with configurable cash, windows, lookback, and risk.
+- Strategy selector with MA crossover, RSI reversion, MACD trend, and buy-and-hold benchmark.
+- Strategy comparison table for the selected symbol.
 - Paper order ticket with buy/sell validation.
 - Paper portfolio with equity, exposure, realized P/L, positions, and recent trades saved in browser storage.
 - Dashboard panels for scanner rankings, backtest results, market quotes, signals, and portfolio state.

@@ -11,6 +11,7 @@ import {
   parseCandlesCsv,
   runBacktest,
   scanMarket,
+  strategies,
   symbols
 } from "./botEngine.js";
 import "./styles.css";
@@ -85,7 +86,8 @@ function App() {
     shortWindow: 20,
     longWindow: 50,
     lookbackDays: 260,
-    riskPercent: 25
+    riskPercent: 25,
+    strategy: "ma-crossover"
   });
   const [backtest, setBacktest] = useState(null);
 
@@ -98,6 +100,21 @@ function App() {
   );
   const bestSetup = scanner?.results?.[0];
   const equityPath = buildPath(backtest?.equityCurve || []);
+  const strategyComparison = useMemo(
+    () =>
+      strategies.map((strategy) => {
+        const result = runBacktest(
+          {
+            ...backtestForm,
+            strategy: strategy.id,
+            riskPercent: Number(backtestForm.riskPercent) / 100
+          },
+          dataBySymbol
+        );
+        return { strategy, result };
+      }),
+    [backtestForm, dataBySymbol]
+  );
 
   useEffect(() => {
     async function init() {
@@ -198,7 +215,12 @@ function App() {
       const mergedData = { ...bundledData, ...nextUploadedData };
       setUploadedData(nextUploadedData);
       setDataBySymbol(mergedData);
-      setBacktest(runBacktest({ ...backtestForm, symbol }, mergedData));
+      setBacktest(
+        runBacktest(
+          { ...backtestForm, symbol, riskPercent: Number(backtestForm.riskPercent) / 100 },
+          mergedData
+        )
+      );
       setScanner(
         scanMarket(
           { ...backtestForm, symbol, riskPercent: Number(backtestForm.riskPercent) / 100 },
@@ -387,6 +409,21 @@ function App() {
               </select>
             </label>
             <label>
+              Strategy
+              <select
+                value={backtestForm.strategy}
+                onChange={(event) =>
+                  setBacktestForm({ ...backtestForm, strategy: event.target.value })
+                }
+              >
+                {strategies.map((strategy) => (
+                  <option key={strategy.id} value={strategy.id}>
+                    {strategy.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Starting Cash
               <input
                 type="number"
@@ -459,9 +496,15 @@ function App() {
         <article className="card results-card">
           <div className="card-header">
             <h2>Backtest Results</h2>
-            <span className={`pill ${backtest?.data?.source === "csv" ? "buy" : "hold"}`}>
-              {backtest?.data?.source || "simulated"}
-            </span>
+            <div className="result-badges">
+              <span className="pill hold">
+                {strategies.find((strategy) => strategy.id === backtest?.config?.strategy)?.name ||
+                  "Strategy"}
+              </span>
+              <span className={`pill ${backtest?.data?.source === "csv" ? "buy" : "hold"}`}>
+                {backtest?.data?.source || "simulated"}
+              </span>
+            </div>
           </div>
           <div className="metrics four">
             <div>
@@ -524,6 +567,40 @@ function App() {
             </tbody>
           </table>
         </article>
+      </section>
+
+      <section className="card data-card">
+        <h2>Strategy Comparison</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Return</th>
+              <th>Max DD</th>
+              <th>Win Rate</th>
+              <th>Trades</th>
+              <th>Data</th>
+            </tr>
+          </thead>
+          <tbody>
+            {strategyComparison.map(({ strategy, result }) => (
+              <tr key={strategy.id}>
+                <td>{strategy.name}</td>
+                <td className={result.summary.returnPercent >= 0 ? "gain" : "loss"}>
+                  {formatPercent(result.summary.returnPercent)}
+                </td>
+                <td className="loss">{formatPercent(result.summary.maxDrawdownPercent)}</td>
+                <td>{formatPercent(result.summary.winRatePercent)}</td>
+                <td>{result.summary.totalTrades}</td>
+                <td>
+                  <span className={`pill ${result.data.source === "csv" ? "buy" : "hold"}`}>
+                    {result.data.source}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
 
       <section className="grid">

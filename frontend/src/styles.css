@@ -406,6 +406,13 @@ button:disabled {
   min-width: 0;
 }
 
+.result-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .upload-card {
   margin-bottom: 18px;
 }

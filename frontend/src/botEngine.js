@@ -2,6 +2,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ"];
 
+export const strategies = [
+  { id: "ma-crossover", name: "MA Crossover" },
+  { id: "rsi-reversion", name: "RSI Reversion" },
+  { id: "macd-trend", name: "MACD Trend" },
+  { id: "buy-hold", name: "Buy & Hold" }
+];
+
 const basePrices = {
   AAPL: 212.45,
   MSFT: 426.8,
@@ -231,6 +238,125 @@ function calculateMaxDrawdown(equityCurve) {
   return maxDrawdown;
 }
 
+function exponentialMovingAverage(values, period) {
+  const output = [];
+  const multiplier = 2 / (period + 1);
+  let ema = null;
+
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    ema = ema === null ? value : value * multiplier + ema * (1 - multiplier);
+    output.push(ema);
+  }
+
+  return output;
+}
+
+function relativeStrengthIndex(candles, period = 14) {
+  const output = Array(candles.length).fill(null);
+  let averageGain = 0;
+  let averageLoss = 0;
+
+  for (let index = 1; index < candles.length; index += 1) {
+    const change = candles[index].close - candles[index - 1].close;
+    const gain = Math.max(0, change);
+    const loss = Math.max(0, -change);
+
+    if (index <= period) {
+      averageGain += gain;
+      averageLoss += loss;
+
+      if (index === period) {
+        averageGain /= period;
+        averageLoss /= period;
+        output[index] = averageLoss === 0 ? 100 : 100 - 100 / (1 + averageGain / averageLoss);
+      }
+      continue;
+    }
+
+    averageGain = (averageGain * (period - 1) + gain) / period;
+    averageLoss = (averageLoss * (period - 1) + loss) / period;
+    output[index] = averageLoss === 0 ? 100 : 100 - 100 / (1 + averageGain / averageLoss);
+  }
+
+  return output;
+}
+
+function buildStrategySignals(candles, strategyId, { shortWindow, longWindow }) {
+  const closes = candles.map((candle) => candle.close);
+  const signals = Array(candles.length).fill("hold");
+
+  if (strategyId === "buy-hold") {
+    if (candles.length) {
+      signals[0] = "buy";
+      signals[candles.length - 1] = "sell";
+    }
+    return signals;
+  }
+
+  if (strategyId === "rsi-reversion") {
+    const rsi = relativeStrengthIndex(candles, 14);
+    for (let index = 1; index < candles.length; index += 1) {
+      if (rsi[index - 1] !== null && rsi[index] !== null) {
+        if (rsi[index - 1] >= 30 && rsi[index] < 30) {
+          signals[index] = "buy";
+        } else if (rsi[index - 1] <= 60 && rsi[index] > 60) {
+          signals[index] = "sell";
+        }
+      }
+    }
+    return signals;
+  }
+
+  if (strategyId === "macd-trend") {
+    const ema12 = exponentialMovingAverage(closes, 12);
+    const ema26 = exponentialMovingAverage(closes, 26);
+    const macd = ema12.map((value, index) => value - ema26[index]);
+    const signal = exponentialMovingAverage(macd, 9);
+
+    for (let index = 1; index < candles.length; index += 1) {
+      if (macd[index - 1] <= signal[index - 1] && macd[index] > signal[index]) {
+        signals[index] = "buy";
+      } else if (macd[index - 1] >= signal[index - 1] && macd[index] < signal[index]) {
+        signals[index] = "sell";
+      }
+    }
+    return signals;
+  }
+
+  for (let index = 1; index < candles.length; index += 1) {
+    const shortAverage = movingAverage(candles, index, shortWindow);
+    const longAverage = movingAverage(candles, index, longWindow);
+    const previousShort = movingAverage(candles, index - 1, shortWindow);
+    const previousLong = movingAverage(candles, index - 1, longWindow);
+
+    if (shortAverage && longAverage && previousShort && previousLong) {
+      if (previousShort <= previousLong && shortAverage > longAverage) {
+        signals[index] = "buy";
+      } else if (previousShort >= previousLong && shortAverage < longAverage) {
+        signals[index] = "sell";
+      }
+    }
+  }
+
+  return signals;
+}
+
+function strategyReason(strategyId, signal, { shortWindow, longWindow }) {
+  if (strategyId === "buy-hold") {
+    return signal === "buy" ? "Opened benchmark position." : "Closed benchmark position.";
+  }
+  if (strategyId === "rsi-reversion") {
+    return signal === "buy" ? "RSI crossed into oversold territory." : "RSI recovered above exit threshold.";
+  }
+  if (strategyId === "macd-trend") {
+    return signal === "buy" ? "MACD crossed above signal line." : "MACD crossed below signal line.";
+  }
+  return signal === "buy"
+    ? `${shortWindow}-day average crossed above ${longWindow}-day average`
+    : `${shortWindow}-day average crossed below ${longWindow}-day average`;
+}
+
 export function runBacktest(options = {}, dataBySymbol = {}) {
   const symbol = symbols.includes(String(options.symbol || "").toUpperCase())
     ? String(options.symbol).toUpperCase()
@@ -240,8 +366,13 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const longWindow = Math.floor(clampNumber(options.longWindow, 50, shortWindow + 1, 220));
   const lookbackDays = Math.floor(clampNumber(options.lookbackDays, 260, longWindow + 30, 900));
   const riskPercent = clampNumber(options.riskPercent, 0.25, 0.05, 1);
-  const data = getHistoricalCandlesWithSource(symbol, lookbackDays, longWindow + 2, dataBySymbol);
+  const strategyId = strategies.some((strategy) => strategy.id === options.strategy)
+    ? options.strategy
+    : "ma-crossover";
+  const minRows = strategyId === "macd-trend" ? 40 : strategyId === "rsi-reversion" ? 20 : longWindow + 2;
+  const data = getHistoricalCandlesWithSource(symbol, lookbackDays, minRows, dataBySymbol);
   const candles = data.candles;
+  const strategySignals = buildStrategySignals(candles, strategyId, { shortWindow, longWindow });
   const trades = [];
   const equityCurve = [];
   let cash = startingCash;
@@ -251,50 +382,42 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
 
   for (let index = 0; index < candles.length; index += 1) {
     const candle = candles[index];
-    const shortAverage = movingAverage(candles, index, shortWindow);
-    const longAverage = movingAverage(candles, index, longWindow);
-    const previousShort = movingAverage(candles, index - 1, shortWindow);
-    const previousLong = movingAverage(candles, index - 1, longWindow);
     const equity = cash + shares * candle.close;
+    const signal = strategySignals[index];
 
-    if (shortAverage && longAverage && previousShort && previousLong) {
-      const crossedUp = previousShort <= previousLong && shortAverage > longAverage;
-      const crossedDown = previousShort >= previousLong && shortAverage < longAverage;
-
-      if (crossedUp && shares === 0) {
-        const quantity = Math.floor((equity * riskPercent) / candle.close);
-        if (quantity > 0) {
-          const gross = quantity * candle.close;
-          shares = quantity;
-          entryPrice = candle.close;
-          cash -= gross;
-          trades.push({
-            date: candle.date,
-            side: "buy",
-            quantity,
-            price: candle.close,
-            gross: round(gross),
-            reason: `${shortWindow}-day average crossed above ${longWindow}-day average`
-          });
-        }
-      }
-
-      if (crossedDown && shares > 0) {
-        const gross = shares * candle.close;
-        const pnl = (candle.close - entryPrice) * shares;
-        cash += gross;
+    if (signal === "buy" && shares === 0) {
+      const quantity = Math.floor((equity * riskPercent) / candle.close);
+      if (quantity > 0) {
+        const gross = quantity * candle.close;
+        shares = quantity;
+        entryPrice = candle.close;
+        cash -= gross;
         trades.push({
           date: candle.date,
-          side: "sell",
-          quantity: shares,
+          side: "buy",
+          quantity,
           price: candle.close,
           gross: round(gross),
-          pnl: round(pnl),
-          reason: `${shortWindow}-day average crossed below ${longWindow}-day average`
+          reason: strategyReason(strategyId, "buy", { shortWindow, longWindow })
         });
-        shares = 0;
-        entryPrice = 0;
       }
+    }
+
+    if (signal === "sell" && shares > 0) {
+      const gross = shares * candle.close;
+      const pnl = (candle.close - entryPrice) * shares;
+      cash += gross;
+      trades.push({
+        date: candle.date,
+        side: "sell",
+        quantity: shares,
+        price: candle.close,
+        gross: round(gross),
+        pnl: round(pnl),
+        reason: strategyReason(strategyId, "sell", { shortWindow, longWindow })
+      });
+      shares = 0;
+      entryPrice = 0;
     }
 
     const markToMarket = cash + shares * candle.close;
@@ -329,7 +452,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const finalEquity = equityCurve.at(-1)?.equity || startingCash;
 
   return {
-    config: { symbol, startingCash, shortWindow, longWindow, lookbackDays, riskPercent },
+    config: { symbol, startingCash, shortWindow, longWindow, lookbackDays, riskPercent, strategy: strategyId },
     data: {
       source: data.source,
       rowsAvailable: data.rowsAvailable,
@@ -353,11 +476,12 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   };
 }
 
-function classifySetup({ shortAverage, longAverage, price, returnPercent, maxDrawdownPercent }) {
+function classifySetup({ shortAverage, longAverage, price, returnPercent, maxDrawdownPercent, strategyId }) {
   const trendSpread = ((shortAverage - longAverage) / longAverage) * 100;
   const priceStrength = ((price - longAverage) / longAverage) * 100;
+  const strategyBoost = strategyId === "buy-hold" ? -8 : strategyId === "rsi-reversion" ? 2 : 0;
   const score = Math.round(
-    50 + trendSpread * 8 + returnPercent * 1.8 + priceStrength * 1.2 - maxDrawdownPercent * 1.4
+    50 + trendSpread * 8 + returnPercent * 1.8 + priceStrength * 1.2 - maxDrawdownPercent * 1.4 + strategyBoost
   );
 
   if (score >= 68 && trendSpread > 0 && priceStrength > 0) {
@@ -376,14 +500,21 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
   const longWindow = Number(options.longWindow || 50);
   const lookbackDays = Number(options.lookbackDays || 260);
   const riskPercent = Number(options.riskPercent || 0.25);
+  const strategyId = strategies.some((strategy) => strategy.id === options.strategy)
+    ? options.strategy
+    : "ma-crossover";
+  const minRows = strategyId === "macd-trend" ? 40 : strategyId === "rsi-reversion" ? 20 : longWindow + 5;
 
   const results = symbols
     .map((symbol) => {
-      const backtest = runBacktest({ symbol, shortWindow, longWindow, lookbackDays, riskPercent }, dataBySymbol);
+      const backtest = runBacktest(
+        { symbol, shortWindow, longWindow, lookbackDays, riskPercent, strategy: strategyId },
+        dataBySymbol
+      );
       const data = getHistoricalCandlesWithSource(
         symbol,
         Math.max(lookbackDays, longWindow + 5),
-        longWindow + 5,
+        minRows,
         dataBySymbol
       );
       const candles = data.candles;
@@ -396,7 +527,8 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
         longAverage,
         price: candles[lastIndex].close,
         returnPercent: backtest.summary.returnPercent,
-        maxDrawdownPercent: backtest.summary.maxDrawdownPercent
+        maxDrawdownPercent: backtest.summary.maxDrawdownPercent,
+        strategyId
       });
 
       return {
@@ -410,6 +542,7 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
         maxDrawdownPercent: backtest.summary.maxDrawdownPercent,
         winRatePercent: backtest.summary.winRatePercent,
         dataSource: data.source,
+        strategy: strategyId,
         shortAverage: round(shortAverage),
         longAverage: round(longAverage),
         suggestedQuantity: Math.max(1, Math.floor((100000 * riskPercent) / (quote?.price || candles[lastIndex].close)))
