@@ -13,8 +13,9 @@ services:
       - key: TRADING_MODE
         value: paper
 
-  - type: static
+  - type: web
     name: tradebot-frontend
+    runtime: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
