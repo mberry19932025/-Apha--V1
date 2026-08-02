@@ -19,6 +19,8 @@ The current historical data is deterministic sample data generated locally. Repl
 
 The static app uses real local CSV data when a file exists in `frontend/public/data/`. If a symbol does not have enough CSV rows for the selected moving-average windows, the bot falls back to simulated data and marks the source in the dashboard.
 
+The deployed app also supports browser CSV uploads. Uploaded data is saved in that browser's local storage and is used before bundled CSV files, so you can refresh market data without redeploying.
+
 CSV files must be named by symbol, for example:
 
 ```text
@@ -41,6 +43,8 @@ ALPHA_VANTAGE_API_KEY=your_free_key npm run data:alpha --workspace backend -- AA
 ```
 
 This saves CSV files into `backend/data/`. For static hosting, copy the downloaded CSV files into `frontend/public/data/` before building. The browser app then uses those files automatically for backtests and scanner rankings.
+
+For the fastest live workflow, download a CSV named like `AAPL.csv`, open the dashboard, and use **Update Market Data > Upload CSV**.
 
 ## Structure
 

@@ -8,6 +8,7 @@ import {
   getSignals,
   loadBundledData,
   placePaperTrade,
+  parseCandlesCsv,
   runBacktest,
   scanMarket,
   symbols
@@ -15,6 +16,7 @@ import {
 import "./styles.css";
 
 const portfolioKey = "apex-alpha-static-portfolio";
+const uploadedDataKey = "apex-alpha-uploaded-data";
 
 function formatMoney(value) {
   return new Intl.NumberFormat("en-US", {
@@ -57,8 +59,19 @@ function loadStoredPortfolio() {
   }
 }
 
+function loadUploadedData() {
+  try {
+    const stored = localStorage.getItem(uploadedDataKey);
+    return stored ? JSON.parse(stored) : {};
+  } catch {
+    return {};
+  }
+}
+
 function App() {
   const [dataBySymbol, setDataBySymbol] = useState({});
+  const [bundledData, setBundledData] = useState({});
+  const [uploadedData, setUploadedData] = useState(loadUploadedData);
   const [market, setMarket] = useState(() => getMarketSnapshot());
   const [scanner, setScanner] = useState(null);
   const [portfolioState, setPortfolioState] = useState(loadStoredPortfolio);
@@ -88,16 +101,18 @@ function App() {
 
   useEffect(() => {
     async function init() {
-      const bundledData = await loadBundledData();
-      setDataBySymbol(bundledData);
-      setBacktest(runBacktest(backtestForm, bundledData));
+      const loadedBundledData = await loadBundledData();
+      const mergedData = { ...loadedBundledData, ...uploadedData };
+      setBundledData(loadedBundledData);
+      setDataBySymbol(mergedData);
+      setBacktest(runBacktest(backtestForm, mergedData));
       setScanner(
         scanMarket(
           {
             ...backtestForm,
             riskPercent: Number(backtestForm.riskPercent) / 100
           },
-          bundledData,
+          mergedData,
           market
         )
       );
@@ -110,6 +125,11 @@ function App() {
   useEffect(() => {
     localStorage.setItem(portfolioKey, JSON.stringify(portfolioState));
   }, [portfolioState]);
+
+  useEffect(() => {
+    localStorage.setItem(uploadedDataKey, JSON.stringify(uploadedData));
+    setDataBySymbol({ ...bundledData, ...uploadedData });
+  }, [uploadedData, bundledData]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -153,6 +173,58 @@ function App() {
   function resetPortfolio() {
     setPortfolioState(createInitialPortfolio());
     setMessage("Paper portfolio reset.");
+  }
+
+  async function uploadCsv(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    const symbolFromName = file.name.replace(/\.[^.]+$/, "").trim().toUpperCase();
+    const symbol = symbols.includes(symbolFromName) ? symbolFromName : backtestForm.symbol;
+
+    try {
+      const text = await file.text();
+      const candles = parseCandlesCsv(text);
+
+      if (candles.length < 2) {
+        throw new Error("CSV must include date, open, high, low, close, and volume columns.");
+      }
+
+      const nextUploadedData = { ...uploadedData, [symbol]: candles };
+      const mergedData = { ...bundledData, ...nextUploadedData };
+      setUploadedData(nextUploadedData);
+      setDataBySymbol(mergedData);
+      setBacktest(runBacktest({ ...backtestForm, symbol }, mergedData));
+      setScanner(
+        scanMarket(
+          { ...backtestForm, symbol, riskPercent: Number(backtestForm.riskPercent) / 100 },
+          mergedData,
+          market
+        )
+      );
+      syncSymbol(symbol);
+      setMessage(`Uploaded ${candles.length} rows for ${symbol}.`);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function clearUploadedData() {
+    setUploadedData({});
+    setDataBySymbol(bundledData);
+    setBacktest(runBacktest(backtestForm, bundledData));
+    setScanner(
+      scanMarket(
+        { ...backtestForm, riskPercent: Number(backtestForm.riskPercent) / 100 },
+        bundledData,
+        market
+      )
+    );
+    setMessage("Uploaded CSV data cleared.");
   }
 
   function useScanPick(result) {
@@ -282,6 +354,24 @@ function App() {
             </p>
           )}
         </article>
+      </section>
+
+      <section className="card upload-card">
+        <div className="card-header">
+          <h2>Update Market Data</h2>
+          <button type="button" className="secondary danger" onClick={clearUploadedData}>
+            Clear Uploads
+          </button>
+        </div>
+        <div className="upload-row">
+          <label className="file-picker">
+            Upload CSV
+            <input type="file" accept=".csv,text/csv" onChange={uploadCsv} />
+          </label>
+          <p className="signal-note">
+            Name files by symbol, like AAPL.csv or SPY.csv. Uploaded data stays in this browser.
+          </p>
+        </div>
       </section>
 
       <section className="backtest-layout">
