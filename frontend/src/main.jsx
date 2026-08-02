@@ -314,7 +314,7 @@ function App() {
       <section className="brief-grid">
         <article className="card">
           <div className="card-header">
-            <h2>PDF Project Brief</h2>
+            <h2>Alpha V1 Brief</h2>
             <span className="pill buy">V1</span>
           </div>
           <div className="brief-list">
