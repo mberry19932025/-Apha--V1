@@ -4,6 +4,11 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { getMarketSnapshot, getSignals } from "./market.js";
 import { getPortfolio, placeTrade } from "./portfolio.js";
+import { runBacktest } from "./backtest.js";
+import { resetPortfolio } from "./portfolio.js";
+import { scanMarket } from "./scanner.js";
+import { getDataStatus } from "./data.js";
+import { getSupportedSymbols } from "./market.js";
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -31,6 +36,18 @@ app.get("/api/signals", (_req, res) => {
   res.json({ signals: getSignals() });
 });
 
+app.get("/api/backtest", (req, res) => {
+  res.json(runBacktest(req.query));
+});
+
+app.get("/api/scanner", (req, res) => {
+  res.json(scanMarket(req.query));
+});
+
+app.get("/api/data/status", (_req, res) => {
+  res.json({ symbols: getDataStatus(getSupportedSymbols()) });
+});
+
 app.get("/api/portfolio", (_req, res) => {
   res.json(getPortfolio());
 });
@@ -42,6 +59,10 @@ app.post("/api/trades", (req, res) => {
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
+});
+
+app.post("/api/portfolio/reset", (_req, res) => {
+  res.json(resetPortfolio());
 });
 
 app.listen(port, () => {

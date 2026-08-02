@@ -9,6 +9,10 @@ const basePrices = {
   QQQ: 472.19
 };
 
+export function getSupportedSymbols() {
+  return [...symbols];
+}
+
 export function getMarketSnapshot() {
   const now = Date.now();
 

@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/server.js",
-    "start": "node src/server.js"
+    "dev": "node src/server.js",
+    "start": "node src/server.js",
+    "data:alpha": "node scripts/download-alpha-vantage.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

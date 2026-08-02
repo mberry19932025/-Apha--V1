@@ -2,6 +2,8 @@ import { getQuote } from "./market.js";
 
 const state = {
   cash: 100000,
+  startingCash: 100000,
+  realizedPnl: 0,
   trades: [],
   positions: {}
 };
@@ -23,11 +25,18 @@ export function getPortfolio() {
   });
 
   const equity = positions.reduce((sum, position) => sum + position.marketValue, state.cash);
+  const exposure = positions.reduce((sum, position) => sum + position.marketValue, 0);
 
   return {
     mode: process.env.TRADING_MODE || "paper",
     cash: Number(state.cash.toFixed(2)),
     equity: Number(equity.toFixed(2)),
+    startingCash: state.startingCash,
+    realizedPnl: Number(state.realizedPnl.toFixed(2)),
+    totalReturn: Number((equity - state.startingCash).toFixed(2)),
+    totalReturnPercent: Number((((equity - state.startingCash) / state.startingCash) * 100).toFixed(2)),
+    exposure: Number(exposure.toFixed(2)),
+    exposurePercent: Number(((exposure / equity) * 100).toFixed(2)),
     positions,
     trades: state.trades.slice(-20).reverse()
   };
@@ -73,6 +82,7 @@ export function placeTrade({ symbol, side, quantity }) {
       throw new Error("Cannot sell more shares than the paper portfolio holds.");
     }
 
+    state.realizedPnl += (quote.price - position.averagePrice) * normalizedQuantity;
     position.quantity -= normalizedQuantity;
     state.cash += gross;
 
@@ -90,9 +100,21 @@ export function placeTrade({ symbol, side, quantity }) {
     quantity: normalizedQuantity,
     price: quote.price,
     gross: Number(gross.toFixed(2)),
+    realizedPnl:
+      normalizedSide === "sell"
+        ? Number(((quote.price - position.averagePrice) * normalizedQuantity).toFixed(2))
+        : 0,
     createdAt: new Date().toISOString()
   };
 
   state.trades.push(trade);
   return trade;
+}
+
+export function resetPortfolio() {
+  state.cash = state.startingCash;
+  state.realizedPnl = 0;
+  state.trades = [];
+  state.positions = {};
+  return getPortfolio();
 }
