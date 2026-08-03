@@ -1,6 +1,6 @@
 :root {
-  color: #edf3f2;
-  background: #101413;
+  color: #f8edd0;
+  background: #050505;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -14,8 +14,10 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    radial-gradient(circle at top left, rgba(45, 147, 108, 0.2), transparent 30rem),
-    linear-gradient(135deg, #101413 0%, #17211f 48%, #111317 100%);
+    radial-gradient(circle at 10% 0%, rgba(245, 197, 79, 0.18), transparent 24rem),
+    radial-gradient(circle at 88% 12%, rgba(255, 229, 151, 0.09), transparent 22rem),
+    linear-gradient(135deg, #030303 0%, #111111 42%, #050505 100%);
+  background-attachment: fixed;
 }
 
 button,
@@ -40,7 +42,7 @@ select {
 
 .eyebrow,
 small {
-  color: #a1b4ae;
+  color: #b9a66e;
 }
 
 .eyebrow {
@@ -61,14 +63,22 @@ h1 {
   margin-bottom: 12px;
   font-size: clamp(2.4rem, 6vw, 5rem);
   line-height: 0.95;
+  color: #f6d77a;
+  background: linear-gradient(90deg, #8a6a18 0%, #f6d77a 28%, #fff1b6 48%, #c89421 72%, #f9e38d 100%);
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gold-shimmer 7s linear infinite;
 }
 
 h2 {
   font-size: 1.1rem;
+  color: #f2d27a;
 }
 
 .lede {
-  color: #c6d3cf;
+  color: #d9c996;
   max-width: 680px;
   font-size: 1.1rem;
 }
@@ -76,9 +86,14 @@ h2 {
 .status-card,
 .card,
 .alert {
-  border: 1px solid rgba(166, 179, 172, 0.22);
-  background: rgba(18, 24, 23, 0.86);
-  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(219, 176, 74, 0.28);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01)),
+    radial-gradient(circle at 15% 0%, rgba(226, 180, 58, 0.08), transparent 16rem),
+    rgba(9, 9, 9, 0.9);
+  box-shadow:
+    0 24px 90px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 231, 166, 0.08);
   backdrop-filter: blur(14px);
 }
 
@@ -104,8 +119,8 @@ h2 {
 }
 
 .dot.online {
-  background: #22c55e;
-  box-shadow: 0 0 24px #22c55e;
+  background: #f4c84e;
+  box-shadow: 0 0 24px rgba(244, 200, 78, 0.82);
 }
 
 .alert {
@@ -169,9 +184,11 @@ h2 {
 .summary-strip div {
   min-width: 0;
   padding: 16px;
-  border: 1px solid rgba(166, 179, 172, 0.18);
+  border: 1px solid rgba(219, 176, 74, 0.2);
   border-radius: 8px;
-  background: rgba(18, 24, 23, 0.7);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.006)),
+    rgba(12, 12, 12, 0.78);
 }
 
 .summary-strip strong {
@@ -216,9 +233,9 @@ h2 {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid rgba(166, 179, 172, 0.18);
+  border: 1px solid rgba(219, 176, 74, 0.2);
   border-radius: 8px;
-  background: rgba(31, 39, 36, 0.52);
+  background: rgba(20, 19, 16, 0.66);
 }
 
 .inline-toggle input {
@@ -248,7 +265,9 @@ h2 {
 .metrics div {
   padding: 16px;
   border-radius: 8px;
-  background: rgba(31, 39, 36, 0.86);
+  background:
+    linear-gradient(145deg, rgba(255, 225, 140, 0.055), rgba(255, 255, 255, 0.01)),
+    rgba(17, 17, 17, 0.88);
 }
 
 .metrics strong {
@@ -267,11 +286,11 @@ th,
 td {
   padding: 12px 8px;
   text-align: left;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  border-bottom: 1px solid rgba(219, 176, 74, 0.12);
 }
 
 th {
-  color: #a1b4ae;
+  color: #b9a66e;
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -293,17 +312,17 @@ th {
 label {
   display: grid;
   gap: 7px;
-  color: #c6d3cf;
+  color: #dfcf99;
 }
 
 input,
 select {
   width: 100%;
-  border: 1px solid rgba(166, 179, 172, 0.28);
+  border: 1px solid rgba(219, 176, 74, 0.28);
   border-radius: 8px;
   padding: 12px 14px;
-  color: #f8fafc;
-  background: rgba(31, 39, 36, 0.92);
+  color: #fff7d7;
+  background: rgba(13, 13, 13, 0.94);
 }
 
 input[type="file"] {
@@ -316,23 +335,29 @@ button {
   border: 0;
   border-radius: 8px;
   padding: 13px 16px;
-  color: #0d1712;
-  background: #69d391;
+  color: #171006;
+  background: linear-gradient(135deg, #8a6419, #f6d77a 42%, #fff2ba 55%, #b98116);
+  background-size: 180% auto;
   font-weight: 800;
   cursor: pointer;
   touch-action: manipulation;
   user-select: none;
+  box-shadow: 0 10px 28px rgba(226, 180, 58, 0.2);
 }
 
 button.buy-button {
   min-height: 48px;
-  box-shadow: 0 0 0 2px rgba(105, 211, 145, 0.2), 0 12px 32px rgba(105, 211, 145, 0.18);
+  box-shadow:
+    0 0 0 2px rgba(246, 215, 122, 0.16),
+    0 16px 38px rgba(226, 180, 58, 0.22);
+  animation: button-shimmer 8s linear infinite;
 }
 
 button.secondary {
-  border: 1px solid rgba(166, 179, 172, 0.26);
-  color: #edf3f2;
-  background: rgba(31, 39, 36, 0.86);
+  border: 1px solid rgba(219, 176, 74, 0.26);
+  color: #f8edd0;
+  background: rgba(17, 17, 17, 0.86);
+  box-shadow: none;
 }
 
 button.mini {
@@ -353,7 +378,7 @@ button:disabled {
 
 .signal-note {
   margin: 18px 0 0;
-  color: #c6d3cf;
+  color: #d9c996;
 }
 
 .signals {
@@ -368,7 +393,7 @@ button:disabled {
   gap: 14px;
   padding: 14px;
   border-radius: 8px;
-  background: rgba(31, 39, 36, 0.72);
+  background: rgba(18, 17, 15, 0.76);
 }
 
 .signal strong,
@@ -392,7 +417,9 @@ button:disabled {
   gap: 10px;
   padding: 10px 12px;
   border-radius: 8px;
-  background: rgba(31, 39, 36, 0.72);
+  background:
+    linear-gradient(135deg, rgba(255, 232, 167, 0.04), transparent),
+    rgba(18, 17, 15, 0.76);
 }
 
 .brief-item strong,
@@ -412,7 +439,7 @@ button:disabled {
 
 .checkmark {
   color: #052e16;
-  background: #95e8b0;
+  background: #f6d77a;
 }
 
 .xmark {
@@ -427,9 +454,9 @@ button:disabled {
   gap: 14px;
   width: 100%;
   padding: 14px;
-  border: 1px solid rgba(166, 179, 172, 0.14);
-  color: #edf3f2;
-  background: rgba(31, 39, 36, 0.72);
+  border: 1px solid rgba(219, 176, 74, 0.16);
+  color: #f8edd0;
+  background: rgba(18, 17, 15, 0.76);
   text-align: left;
   border-radius: 8px;
 }
@@ -440,8 +467,8 @@ button:disabled {
 }
 
 .scan-row:hover {
-  border-color: rgba(105, 211, 145, 0.52);
-  background: rgba(38, 52, 46, 0.92);
+  border-color: rgba(246, 215, 122, 0.58);
+  background: rgba(31, 26, 15, 0.94);
 }
 
 .scan-score {
@@ -467,7 +494,7 @@ button:disabled {
 
 .pill.buy {
   color: #052e16;
-  background: #95e8b0;
+  background: #f6d77a;
 }
 
 .pill.sell {
@@ -477,7 +504,7 @@ button:disabled {
 
 .pill.hold {
   color: #3c2502;
-  background: #f0c46b;
+  background: #c9982b;
 }
 
 .backtest-layout {
@@ -538,12 +565,12 @@ button:disabled {
   height: 220px;
   margin: 4px 0 18px;
   padding: 18px;
-  border: 1px solid rgba(166, 179, 172, 0.16);
+  border: 1px solid rgba(219, 176, 74, 0.18);
   border-radius: 8px;
   background:
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    rgba(31, 39, 36, 0.54);
+    linear-gradient(rgba(246, 215, 122, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(246, 215, 122, 0.04) 1px, transparent 1px),
+    rgba(14, 14, 14, 0.72);
   background-size: 100% 45px, 80px 100%, auto;
 }
 
@@ -555,14 +582,14 @@ button:disabled {
 
 .chart-line {
   fill: none;
-  stroke: #69d391;
+  stroke: #f6d77a;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 4;
 }
 
 .chart-fill {
-  fill: rgba(105, 211, 145, 0.14);
+  fill: rgba(246, 215, 122, 0.14);
   stroke: none;
 }
 
@@ -590,6 +617,67 @@ button:disabled {
 
 .file-picker {
   min-width: 0;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 12% 20%, rgba(255, 255, 255, 0.055) 0 1px, transparent 1.4px),
+    radial-gradient(circle at 72% 64%, rgba(246, 215, 122, 0.05) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 48% 42%, rgba(255, 255, 255, 0.035) 0 1px, transparent 1.3px);
+  background-size: 90px 90px, 130px 130px, 55px 55px;
+  opacity: 0.72;
+  mix-blend-mode: screen;
+}
+
+.card,
+.status-card,
+.summary-strip div,
+.metrics div {
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before,
+.status-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(120deg, transparent 0%, rgba(246, 215, 122, 0.08) 44%, transparent 58%);
+  transform: translateX(-120%);
+  animation: panel-shimmer 11s ease-in-out infinite;
+}
+
+@keyframes gold-shimmer {
+  0% {
+    background-position: 0% center;
+  }
+  100% {
+    background-position: 220% center;
+  }
+}
+
+@keyframes button-shimmer {
+  0% {
+    background-position: 0% center;
+  }
+  100% {
+    background-position: 180% center;
+  }
+}
+
+@keyframes panel-shimmer {
+  0%,
+  70% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
 }
 
 @media (max-width: 820px) {
