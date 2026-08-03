@@ -247,8 +247,14 @@ function App() {
     setMessage("");
 
     try {
-      setPortfolioState((current) => placePaperTrade(current, market, tradeForm));
-      setMessage(`${tradeForm.side.toUpperCase()} filled: ${tradeForm.quantity} ${tradeForm.symbol}.`);
+      const nextPortfolioState = placePaperTrade(portfolioState, market, tradeForm);
+      setPortfolioState(nextPortfolioState);
+      const latestTrade = nextPortfolioState.trades.at(-1);
+      setMessage(
+        `${tradeForm.side.toUpperCase()} filled: ${latestTrade.quantity} ${latestTrade.symbol} at ${formatMoney(
+          latestTrade.price
+        )}.`
+      );
     } catch (error) {
       setMessage(error.message);
     }
