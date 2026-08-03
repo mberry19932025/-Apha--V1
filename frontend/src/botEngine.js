@@ -461,12 +461,20 @@ export function buildOptionsIdeas(scannerResults = [], market = getMarketSnapsho
     const rawStrike = direction === "call" ? price * 1.02 : price * 0.98;
     const strike = round(Math.round(rawStrike / strikeStep) * strikeStep, 2);
     const score = Math.max(1, Math.min(99, Math.round((setup?.score || 50) * 0.7)));
+    const premium = estimateOptionPremium({
+      underlyingPrice: price,
+      strike,
+      contractType: direction,
+      volatilityScore: setup?.intelligence?.volatilityScore || 60
+    });
 
     return {
       underlying,
       contractType: direction,
       strike,
       expiry: "simulated 30-45 DTE",
+      premium,
+      notionalCost: round(premium * 100),
       score,
       stance: setup?.action || "hold",
       note:
@@ -475,6 +483,21 @@ export function buildOptionsIdeas(scannerResults = [], market = getMarketSnapsho
           : "Educational options idea only. Use defined-risk paper sizing before any real options workflow."
     };
   });
+}
+
+export function estimateOptionPremium({
+  underlyingPrice,
+  strike,
+  contractType,
+  volatilityScore = 60
+}) {
+  const intrinsic =
+    contractType === "call"
+      ? Math.max(0, underlyingPrice - strike)
+      : Math.max(0, strike - underlyingPrice);
+  const volatilityFactor = Math.max(0.012, (100 - volatilityScore) / 2400);
+  const timeValue = Math.max(0.35, underlyingPrice * volatilityFactor);
+  return round(Math.max(0.25, intrinsic + timeValue), 2);
 }
 
 export function getSymbolCategory(symbol) {
@@ -1275,12 +1298,19 @@ export function createInitialPortfolio() {
     startingCash: 1000,
     realizedPnl: 0,
     trades: [],
-    positions: {}
+    positions: {},
+    optionPositions: {}
   };
 }
 
 export function buildPortfolio(state, market) {
-  const positions = Object.entries(state.positions).map(([symbol, position]) => {
+  const safeState = {
+    ...state,
+    positions: state.positions || {},
+    optionPositions: state.optionPositions || {},
+    trades: state.trades || []
+  };
+  const positions = Object.entries(safeState.positions).map(([symbol, position]) => {
     const quote = market.find((item) => item.symbol === symbol);
     const marketValue = quote ? quote.price * position.quantity : 0;
     const unrealizedPnl = marketValue - position.averagePrice * position.quantity;
@@ -1298,22 +1328,49 @@ export function buildPortfolio(state, market) {
       openedAt: position.openedAt || null
     };
   });
+  const optionPositions = Object.entries(safeState.optionPositions).map(([contractId, position]) => {
+    const quote = market.find((item) => item.symbol === position.underlying);
+    const markPremium = quote
+      ? estimateOptionPremium({
+          underlyingPrice: quote.price,
+          strike: position.strike,
+          contractType: position.contractType,
+          volatilityScore: position.volatilityScore || 60
+        })
+      : position.averagePremium;
+    const marketValue = markPremium * 100 * position.quantity;
+    const costBasis = position.averagePremium * 100 * position.quantity;
+    const unrealizedPnl = marketValue - costBasis;
+
+    return {
+      contractId,
+      ...position,
+      markPremium,
+      marketValue: round(marketValue),
+      unrealizedPnl: round(unrealizedPnl),
+      unrealizedPnlPercent: costBasis ? round((unrealizedPnl / costBasis) * 100, 2) : 0
+    };
+  });
 
   const exposure = positions.reduce((sum, position) => sum + position.marketValue, 0);
-  const equity = state.cash + exposure;
+  const optionsExposure = optionPositions.reduce((sum, position) => sum + position.marketValue, 0);
+  const equity = safeState.cash + exposure + optionsExposure;
 
   return {
     mode: "static paper",
-    cash: round(state.cash),
+    cash: round(safeState.cash),
     equity: round(equity),
-    startingCash: state.startingCash,
-    realizedPnl: round(state.realizedPnl),
-    totalReturn: round(equity - state.startingCash),
-    totalReturnPercent: round(((equity - state.startingCash) / state.startingCash) * 100),
+    startingCash: safeState.startingCash,
+    realizedPnl: round(safeState.realizedPnl || 0),
+    totalReturn: round(equity - safeState.startingCash),
+    totalReturnPercent: round(((equity - safeState.startingCash) / safeState.startingCash) * 100),
     exposure: round(exposure),
+    optionsExposure: round(optionsExposure),
     exposurePercent: equity ? round((exposure / equity) * 100) : 0,
+    optionsExposurePercent: equity ? round((optionsExposure / equity) * 100) : 0,
     positions,
-    trades: state.trades.slice(-20).reverse()
+    optionPositions,
+    trades: safeState.trades.slice(-30).reverse()
   };
 }
 
@@ -1381,6 +1438,97 @@ export function placePaperTrade(state, market, order) {
     price: quote.price,
     gross: round(gross),
     realizedPnl: round(realizedPnl),
+    createdAt: new Date().toISOString()
+  });
+
+  return next;
+}
+
+export function placePaperOptionTrade(state, optionIdea, order = {}) {
+  const side = String(order.side || "buy").trim().toLowerCase();
+  const quantity = Number(order.quantity || 1);
+  const premium = Number(optionIdea.premium || 0);
+  const contractId = `${optionIdea.underlying}-${optionIdea.expiry}-${optionIdea.strike}-${optionIdea.contractType}`.replaceAll(
+    " ",
+    "-"
+  );
+
+  if (!["buy", "sell"].includes(side)) {
+    throw new Error("Option side must be buy or sell.");
+  }
+
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("Option contract quantity must be greater than zero.");
+  }
+
+  if (!Number.isFinite(premium) || premium <= 0) {
+    throw new Error("Option idea has no valid simulated premium.");
+  }
+
+  const next =
+    typeof structuredClone === "function"
+      ? structuredClone(state)
+      : JSON.parse(JSON.stringify(state));
+  next.optionPositions ||= {};
+  next.trades ||= [];
+
+  const gross = premium * 100 * quantity;
+  const maxOptionsOrder = Math.max(50, next.startingCash * 0.2);
+  const position = next.optionPositions[contractId] || {
+    underlying: optionIdea.underlying,
+    contractType: optionIdea.contractType,
+    strike: optionIdea.strike,
+    expiry: optionIdea.expiry,
+    quantity: 0,
+    averagePremium: 0,
+    volatilityScore: optionIdea.volatilityScore || 60,
+    openedAt: new Date().toISOString()
+  };
+  let realizedPnl = 0;
+
+  if (side === "buy") {
+    if (gross > maxOptionsOrder) {
+      throw new Error(`Options paper order exceeds ${round((maxOptionsOrder / next.startingCash) * 100)}% risk cap.`);
+    }
+    if (gross > next.cash) {
+      throw new Error("Insufficient paper cash for option premium.");
+    }
+
+    const totalCost = position.averagePremium * 100 * position.quantity + gross;
+    position.quantity += quantity;
+    position.averagePremium = totalCost / (position.quantity * 100);
+    next.cash -= gross;
+    next.optionPositions[contractId] = position;
+  } else {
+    if (position.quantity < quantity) {
+      throw new Error("Cannot sell more option contracts than the paper portfolio holds.");
+    }
+
+    realizedPnl = (premium - position.averagePremium) * 100 * quantity;
+    position.quantity -= quantity;
+    next.cash += gross;
+    next.realizedPnl = (next.realizedPnl || 0) + realizedPnl;
+
+    if (position.quantity === 0) {
+      delete next.optionPositions[contractId];
+    } else {
+      next.optionPositions[contractId] = position;
+    }
+  }
+
+  next.trades.push({
+    id:
+      globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    assetType: "option",
+    contractId,
+    symbol: optionIdea.underlying,
+    side,
+    quantity,
+    price: round(premium),
+    gross: round(gross),
+    realizedPnl: round(realizedPnl),
+    description: `${optionIdea.underlying} ${optionIdea.strike} ${optionIdea.contractType.toUpperCase()} ${optionIdea.expiry}`,
     createdAt: new Date().toISOString()
   });
 

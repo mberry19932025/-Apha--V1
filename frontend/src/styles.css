@@ -190,6 +190,10 @@ h2 {
   gap: 10px;
 }
 
+.inline-actions {
+  margin-top: 8px;
+}
+
 .toggle-row {
   display: flex;
   flex-wrap: wrap;

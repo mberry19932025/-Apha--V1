@@ -13,6 +13,7 @@ import {
   getMarketSnapshot,
   getSignals,
   loadBundledData,
+  placePaperOptionTrade,
   placePaperTrade,
   parseCandlesCsv,
   runBacktest,
@@ -352,6 +353,26 @@ function App() {
       const order = { symbol: "SPY", side, quantity: 1 };
       setTradeForm(order);
       executePaperOrder(order);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function tradeOptionIdea(idea, side) {
+    setMessage("");
+
+    try {
+      const nextPortfolioState = placePaperOptionTrade(portfolioState, idea, {
+        side,
+        quantity: 1
+      });
+      setPortfolioState(nextPortfolioState);
+      const latestTrade = nextPortfolioState.trades.at(-1);
+      setMessage(
+        `${side.toUpperCase()} option filled: ${latestTrade.description} x ${latestTrade.quantity} at ${formatMoney(
+          latestTrade.price
+        )} premium.`
+      );
     } catch (error) {
       setMessage(error.message);
     }
@@ -843,8 +864,17 @@ function App() {
                     {idea.underlying} {idea.strike} {idea.contractType.toUpperCase()}
                   </strong>
                   <small>
-                    {idea.expiry} · score {idea.score}/100 · {idea.note}
+                    {idea.expiry} · est. premium {formatMoney(idea.premium)} · max loss{" "}
+                    {formatMoney(idea.notionalCost)} · score {idea.score}/100 · {idea.note}
                   </small>
+                  <span className="quick-actions inline-actions">
+                    <button type="button" className="secondary mini" onClick={() => tradeOptionIdea(idea, "buy")}>
+                      Paper Buy
+                    </button>
+                    <button type="button" className="secondary mini" onClick={() => tradeOptionIdea(idea, "sell")}>
+                      Paper Sell
+                    </button>
+                  </span>
                 </span>
               </div>
             ))}
@@ -1779,6 +1809,44 @@ function App() {
         </article>
 
         <article className="card">
+          <h2>Paper Option Positions</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Contract</th>
+                <th>Qty</th>
+                <th>Avg</th>
+                <th>Mark</th>
+                <th>Value</th>
+                <th>P/L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {portfolio.optionPositions.length ? (
+                portfolio.optionPositions.map((position) => (
+                  <tr key={position.contractId}>
+                    <td>
+                      {position.underlying} {position.strike} {position.contractType.toUpperCase()}
+                    </td>
+                    <td>{position.quantity}</td>
+                    <td>{formatMoney(position.averagePremium)}</td>
+                    <td>{formatMoney(position.markPremium)}</td>
+                    <td>{formatMoney(position.marketValue)}</td>
+                    <td className={position.unrealizedPnl >= 0 ? "gain" : "loss"}>
+                      {formatMoney(position.unrealizedPnl)} · {formatPercent(position.unrealizedPnlPercent)}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="6">No paper option positions.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </article>
+
+        <article className="card">
           <h2>Recent Paper Trades</h2>
           <table>
             <thead>
@@ -1795,7 +1863,7 @@ function App() {
                 portfolio.trades.map((trade) => (
                   <tr key={trade.id}>
                     <td>{new Date(trade.createdAt).toLocaleTimeString()}</td>
-                    <td>{trade.symbol}</td>
+                    <td>{trade.assetType === "option" ? trade.description : trade.symbol}</td>
                     <td>
                       <span className={`pill ${trade.side}`}>{trade.side}</span>
                     </td>
