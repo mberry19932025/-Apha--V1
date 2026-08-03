@@ -760,7 +760,8 @@ export function evaluateAutomationPlan({
   automationLog = [],
   futuresEnabled = true,
   marketClock = getMarketClock(),
-  allowFuturesExtendedHours = false
+  allowFuturesExtendedHours = false,
+  sessionPeakEquity = portfolio?.equity
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
   const adaptiveRisk = getAdaptiveRiskSettings(portfolio, mode);
@@ -771,6 +772,24 @@ export function evaluateAutomationPlan({
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
   const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 70 : 76;
   const positions = new Map((portfolio?.positions || []).map((position) => [position.symbol, position]));
+  const sessionProfit = Number(sessionPeakEquity || portfolio?.equity || 0) - Number(portfolio?.startingCash || 0);
+  const currentProfit = Number(portfolio?.equity || 0) - Number(portfolio?.startingCash || 0);
+  const givebackDollars = Math.max(0, sessionProfit - currentProfit);
+  const gaveBackTooMuch = sessionProfit >= 25 && givebackDollars >= Math.max(12, sessionProfit * 0.35);
+  const greenToRed = sessionProfit >= 15 && currentProfit <= 0;
+  const openStockRisk = (portfolio?.positions || []).sort(
+    (a, b) => Math.abs(Number(b.marketValue || 0)) - Math.abs(Number(a.marketValue || 0))
+  )[0];
+  const openOptionRisk = (portfolio?.optionPositions || []).sort(
+    (a, b) => Math.abs(Number(b.marketValue || 0)) - Math.abs(Number(a.marketValue || 0))
+  )[0];
+  const openFutureRisk = (portfolio?.futuresPositions || []).sort(
+    (a, b) => Math.abs(Number(b.marketValue || 0)) - Math.abs(Number(a.marketValue || 0))
+  )[0];
+  const largestRisk =
+    [openFutureRisk && { ...openFutureRisk, assetType: "future" }, openOptionRisk && { ...openOptionRisk, assetType: "option" }, openStockRisk && { ...openStockRisk, assetType: "stock" }]
+      .filter(Boolean)
+      .sort((a, b) => Math.abs(Number(b.marketValue || 0)) - Math.abs(Number(a.marketValue || 0)))[0] || null;
   const categoryRanks = rankAutomationCategories(scanner?.results || [], watchlist);
   const bestCategory = categoryRanks[0] || null;
   const managedSymbols = bestCategory?.symbols?.length ? bestCategory.symbols : watchlist.length ? watchlist : symbols;
@@ -811,6 +830,75 @@ export function evaluateAutomationPlan({
       futuresPolicy,
       adaptiveRisk,
       marketClock
+    };
+  }
+
+  if ((gaveBackTooMuch || greenToRed) && largestRisk) {
+    if (largestRisk.assetType === "future") {
+      return {
+        action: largestRisk.quantity > 0 ? "sell-future" : "buy-future",
+        symbol: largestRisk.symbol,
+        quantity: Math.abs(largestRisk.quantity),
+        reason: greenToRed
+          ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing futures risk.`
+          : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing futures risk.`,
+        profile,
+        bestCategory,
+        categoryRanks,
+        bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+        futuresPolicy,
+        adaptiveRisk,
+        profitLock: { sessionProfit: round(sessionProfit), currentProfit: round(currentProfit), givebackDollars: round(givebackDollars) }
+      };
+    }
+
+    if (largestRisk.assetType === "option") {
+      return {
+        action: "sell-option",
+        symbol: largestRisk.underlying,
+        quantity: largestRisk.quantity,
+        optionPosition: largestRisk,
+        reason: greenToRed
+          ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing option risk.`
+          : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing option risk.`,
+        profile,
+        bestCategory,
+        categoryRanks,
+        bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+        futuresPolicy,
+        adaptiveRisk,
+        profitLock: { sessionProfit: round(sessionProfit), currentProfit: round(currentProfit), givebackDollars: round(givebackDollars) }
+      };
+    }
+
+    return {
+      action: "sell",
+      symbol: largestRisk.symbol,
+      quantity: largestRisk.quantity,
+      reason: greenToRed
+        ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing stock/ETF risk.`
+        : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing stock/ETF risk.`,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      profitLock: { sessionProfit: round(sessionProfit), currentProfit: round(currentProfit), givebackDollars: round(givebackDollars) }
+    };
+  }
+
+  if (greenToRed) {
+    return {
+      action: "hold",
+      reason: `Profit lock: account was up ${round(sessionProfit)} and is no longer green. Stop new trades for the day.`,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      profitLock: { sessionProfit: round(sessionProfit), currentProfit: round(currentProfit), givebackDollars: round(givebackDollars) }
     };
   }
 

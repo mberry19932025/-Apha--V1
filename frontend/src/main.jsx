@@ -36,6 +36,7 @@ const learningJournalKey = "apex-alpha-learning-journal";
 const watchlistKey = "apex-alpha-watchlist";
 const automationLogKey = "apex-alpha-automation-log";
 const automationSnapshotsKey = "apex-alpha-automation-snapshots";
+const sessionPeakEquityKey = "apex-alpha-session-peak-equity";
 
 function formatMoney(value) {
   return new Intl.NumberFormat("en-US", {
@@ -118,6 +119,16 @@ function loadStoredArray(key, fallback) {
   }
 }
 
+function loadStoredNumber(key, fallback) {
+  try {
+    const stored = localStorage.getItem(key);
+    const parsed = stored === null ? fallback : Number(stored);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function App() {
   const [dataBySymbol, setDataBySymbol] = useState({});
   const [bundledData, setBundledData] = useState({});
@@ -165,6 +176,9 @@ function App() {
   const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(false);
   const [marketClock, setMarketClock] = useState(() => getMarketClock());
   const [marketCloseSnapshotSaved, setMarketCloseSnapshotSaved] = useState(false);
+  const [sessionPeakEquity, setSessionPeakEquity] = useState(() =>
+    loadStoredNumber(sessionPeakEquityKey, 3000)
+  );
   const [automationLog, setAutomationLog] = useState(() => loadStoredArray(automationLogKey, []));
   const [automationSnapshots, setAutomationSnapshots] = useState(() =>
     loadStoredArray(automationSnapshotsKey, [])
@@ -259,7 +273,8 @@ function App() {
         automationLog,
         futuresEnabled: true,
         marketClock,
-        allowFuturesExtendedHours
+        allowFuturesExtendedHours,
+        sessionPeakEquity
       }),
     [
       scanner,
@@ -271,7 +286,8 @@ function App() {
       strategyMap,
       automationLog,
       marketClock,
-      allowFuturesExtendedHours
+      allowFuturesExtendedHours,
+      sessionPeakEquity
     ]
   );
 
@@ -322,6 +338,14 @@ function App() {
   useEffect(() => {
     localStorage.setItem(automationSnapshotsKey, JSON.stringify(automationSnapshots));
   }, [automationSnapshots]);
+
+  useEffect(() => {
+    setSessionPeakEquity((current) => Math.max(current, portfolio.equity));
+  }, [portfolio.equity]);
+
+  useEffect(() => {
+    localStorage.setItem(sessionPeakEquityKey, String(sessionPeakEquity));
+  }, [sessionPeakEquity]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -554,7 +578,8 @@ function App() {
         automationLog,
         futuresEnabled: true,
         marketClock,
-        allowFuturesExtendedHours
+        allowFuturesExtendedHours,
+        sessionPeakEquity
       });
 
       if (plan.action === "hold" || plan.action === "market-closed") {
@@ -583,6 +608,33 @@ function App() {
           reason: plan.reason
         });
         setMessage(`Automation BUY OPTION: ${plan.optionIdea.underlying} ${plan.optionIdea.contractType.toUpperCase()} · ${plan.reason}`);
+        saveAutomationSnapshot(plan.reason);
+        return;
+      }
+
+      if (plan.action === "sell-option") {
+        const position = plan.optionPosition;
+        const optionIdea = {
+          underlying: position.underlying,
+          contractType: position.contractType,
+          strike: position.strike,
+          expiry: position.expiry,
+          premium: position.markPremium || position.averagePremium
+        };
+        const nextPortfolioState = placePaperOptionTrade(portfolioState, optionIdea, {
+          side: "sell",
+          quantity: plan.quantity,
+          strategy: "Profit lock",
+          strategyScore: null
+        });
+        setPortfolioState(nextPortfolioState);
+        recordAutomation({
+          action: "sell-option",
+          symbol: plan.symbol,
+          quantity: plan.quantity,
+          reason: plan.reason
+        });
+        setMessage(`Automation SELL OPTION: ${plan.symbol} · ${plan.reason}`);
         saveAutomationSnapshot(plan.reason);
         return;
       }
@@ -647,6 +699,7 @@ function App() {
     setAutomationLog([]);
     setAutomationSnapshots([]);
     setLearningJournal([]);
+    setSessionPeakEquity(next.equity || next.startingCash);
     setMessage("Today paper session reset to $3,000 starting cash.");
   }
 
@@ -907,6 +960,13 @@ function App() {
               Loss mode active: new entries require stronger evidence, size is reduced, and options fallback is disabled.
             </p>
           )}
+          <p className="signal-note">
+            Profit lock: session peak <strong>{formatMoney(sessionPeakEquity)}</strong> · current profit{" "}
+            <strong className={portfolio.totalReturn >= 0 ? "gain" : "loss"}>
+              {formatMoney(portfolio.totalReturn)}
+            </strong>
+            . If profit gives back too much, automation closes risk before new entries.
+          </p>
           <p className="signal-note">
             Futures policy: <strong>4-hour evaluation cycle</strong> · max daily loss{" "}
             {formatPercent(automationPlan.futuresPolicy?.maxDailyLossPercent)} · profit protect starts at{" "}
