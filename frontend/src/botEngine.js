@@ -856,13 +856,42 @@ export function evaluateAutomationPlan({
     }
 
     if (largestRisk.assetType === "option") {
+      const substantialOptionWin =
+        Number(largestRisk.unrealizedPnl || 0) >= 150 ||
+        Number(largestRisk.unrealizedPnlPercent || 0) >= 100;
+      if (secureDayProfit && substantialOptionWin && largestRisk.quantity === 1 && !gaveBackTooMuch && !greenToRed) {
+        return {
+          action: "hold",
+          reason: `Profit secure: session profit reached ${round(sessionProfit)}. Keeping one substantial winning option as a defined runner; no new trades today unless it gives back profit.`,
+          profile,
+          bestCategory,
+          categoryRanks,
+          bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+          futuresPolicy,
+          adaptiveRisk,
+          profitLock: {
+            secureDayProfit,
+            substantialOptionWin,
+            runnerLeft: true,
+            sessionProfit: round(sessionProfit),
+            currentProfit: round(currentProfit),
+            givebackDollars: round(givebackDollars)
+          }
+        };
+      }
+      const runnerQuantity =
+        secureDayProfit && substantialOptionWin && largestRisk.quantity > 1
+          ? Math.max(1, largestRisk.quantity - 1)
+          : largestRisk.quantity;
       return {
         action: "sell-option",
         symbol: largestRisk.underlying,
-        quantity: largestRisk.quantity,
+        quantity: runnerQuantity,
         optionPosition: largestRisk,
         reason: secureDayProfit
-          ? `Profit secure: session profit reached ${round(sessionProfit)}. Closing option risk and stopping new trades.`
+          ? substantialOptionWin && largestRisk.quantity > 1
+            ? `Profit secure: session profit reached ${round(sessionProfit)}. Selling ${runnerQuantity} option contract(s) to secure profit and leaving one defined runner. No new trades today.`
+            : `Profit secure: session profit reached ${round(sessionProfit)}. Closing option risk and stopping new trades.`
           : greenToRed
             ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing option risk.`
             : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing option risk.`,
@@ -872,7 +901,14 @@ export function evaluateAutomationPlan({
         bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
         futuresPolicy,
         adaptiveRisk,
-        profitLock: { secureDayProfit, sessionProfit: round(sessionProfit), currentProfit: round(currentProfit), givebackDollars: round(givebackDollars) }
+        profitLock: {
+          secureDayProfit,
+          substantialOptionWin,
+          runnerLeft: secureDayProfit && substantialOptionWin && largestRisk.quantity > runnerQuantity,
+          sessionProfit: round(sessionProfit),
+          currentProfit: round(currentProfit),
+          givebackDollars: round(givebackDollars)
+        }
       };
     }
 
