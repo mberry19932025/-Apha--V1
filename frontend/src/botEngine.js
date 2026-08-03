@@ -111,7 +111,9 @@ export async function loadBundledData() {
   const entries = await Promise.all(
     symbols.map(async (symbol) => {
       try {
-        const response = await fetch(`/data/${symbol}.csv`, { cache: "no-store" });
+        const response = await fetch(`${import.meta.env.BASE_URL}data/${symbol}.csv`, {
+          cache: "no-store"
+        });
         if (!response.ok) {
           return [symbol, []];
         }
@@ -366,6 +368,8 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const longWindow = Math.floor(clampNumber(options.longWindow, 50, shortWindow + 1, 220));
   const lookbackDays = Math.floor(clampNumber(options.lookbackDays, 260, longWindow + 30, 900));
   const riskPercent = clampNumber(options.riskPercent, 0.25, 0.05, 1);
+  const slippagePercent = clampNumber(options.slippagePercent, 0.05, 0, 5);
+  const commission = clampNumber(options.commission, 0, 0, 100);
   const strategyId = strategies.some((strategy) => strategy.id === options.strategy)
     ? options.strategy
     : "ma-crossover";
@@ -386,33 +390,41 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
     const signal = strategySignals[index];
 
     if (signal === "buy" && shares === 0) {
-      const quantity = Math.floor((equity * riskPercent) / candle.close);
+      const fillPrice = candle.close * (1 + slippagePercent / 100);
+      const quantity = Math.floor((equity * riskPercent - commission) / fillPrice);
       if (quantity > 0) {
-        const gross = quantity * candle.close;
+        const gross = quantity * fillPrice;
+        const totalCost = gross + commission;
         shares = quantity;
-        entryPrice = candle.close;
-        cash -= gross;
+        entryPrice = fillPrice;
+        cash -= totalCost;
         trades.push({
           date: candle.date,
           side: "buy",
           quantity,
-          price: candle.close,
+          price: round(fillPrice),
           gross: round(gross),
+          commission: round(commission),
+          netCash: round(-totalCost),
           reason: strategyReason(strategyId, "buy", { shortWindow, longWindow })
         });
       }
     }
 
     if (signal === "sell" && shares > 0) {
-      const gross = shares * candle.close;
-      const pnl = (candle.close - entryPrice) * shares;
-      cash += gross;
+      const fillPrice = candle.close * (1 - slippagePercent / 100);
+      const gross = shares * fillPrice;
+      const proceeds = gross - commission;
+      const pnl = (fillPrice - entryPrice) * shares - commission;
+      cash += proceeds;
       trades.push({
         date: candle.date,
         side: "sell",
         quantity: shares,
-        price: candle.close,
+        price: round(fillPrice),
         gross: round(gross),
+        commission: round(commission),
+        netCash: round(proceeds),
         pnl: round(pnl),
         reason: strategyReason(strategyId, "sell", { shortWindow, longWindow })
       });
@@ -432,15 +444,19 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
 
   const lastCandle = candles.at(-1);
   if (shares > 0 && lastCandle) {
-    const gross = shares * lastCandle.close;
-    const pnl = (lastCandle.close - entryPrice) * shares;
-    cash += gross;
+    const fillPrice = lastCandle.close * (1 - slippagePercent / 100);
+    const gross = shares * fillPrice;
+    const proceeds = gross - commission;
+    const pnl = (fillPrice - entryPrice) * shares - commission;
+    cash += proceeds;
     trades.push({
       date: lastCandle.date,
       side: "sell",
       quantity: shares,
-      price: lastCandle.close,
+      price: round(fillPrice),
       gross: round(gross),
+      commission: round(commission),
+      netCash: round(proceeds),
       pnl: round(pnl),
       reason: "Closed open position at end of backtest"
     });
@@ -452,7 +468,17 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const finalEquity = equityCurve.at(-1)?.equity || startingCash;
 
   return {
-    config: { symbol, startingCash, shortWindow, longWindow, lookbackDays, riskPercent, strategy: strategyId },
+    config: {
+      symbol,
+      startingCash,
+      shortWindow,
+      longWindow,
+      lookbackDays,
+      riskPercent,
+      slippagePercent,
+      commission,
+      strategy: strategyId
+    },
     data: {
       source: data.source,
       rowsAvailable: data.rowsAvailable,

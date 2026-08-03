@@ -88,6 +88,8 @@ function App() {
     longWindow: 50,
     lookbackDays: 260,
     riskPercent: 25,
+    slippagePercent: 0.05,
+    commission: 0,
     strategy: "ma-crossover"
   });
   const [backtest, setBacktest] = useState(null);
@@ -533,6 +535,37 @@ function App() {
                 />
               </label>
             </div>
+            <div className="form-row">
+              <label>
+                Slippage %
+                <input
+                  type="number"
+                  min="0"
+                  max="5"
+                  step="0.01"
+                  value={backtestForm.slippagePercent}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      slippagePercent: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Commission
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={backtestForm.commission}
+                  onChange={(event) =>
+                    setBacktestForm({ ...backtestForm, commission: Number(event.target.value) })
+                  }
+                />
+              </label>
+            </div>
             <button type="submit" disabled={backtestLoading}>
               {backtestLoading ? "Running..." : "Run Backtest"}
             </button>
@@ -585,6 +618,7 @@ function App() {
                 <th>Side</th>
                 <th>Qty</th>
                 <th>Price</th>
+                <th>Fees</th>
                 <th>P/L</th>
               </tr>
             </thead>
@@ -600,6 +634,7 @@ function App() {
                     </td>
                     <td>{trade.quantity}</td>
                     <td>{formatMoney(trade.price)}</td>
+                    <td>{formatMoney(trade.commission)}</td>
                     <td className={(trade.pnl || 0) >= 0 ? "gain" : "loss"}>
                       {trade.pnl === undefined ? "-" : formatMoney(trade.pnl)}
                     </td>
@@ -607,7 +642,7 @@ function App() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="5">No trades triggered.</td>
+                  <td colSpan="6">No trades triggered.</td>
                 </tr>
               )}
             </tbody>

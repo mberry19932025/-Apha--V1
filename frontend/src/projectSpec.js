@@ -3,7 +3,8 @@ export const projectCapabilities = [
   "Bundled real daily CSV data for the core watchlist",
   "Browser CSV upload for manual data refreshes",
   "Paper portfolio saved in browser storage",
-  "Scanner, backtester, strategy comparison, and paper order ticket"
+  "Scanner, backtester, strategy comparison, and paper order ticket",
+  "Backtest slippage and commission assumptions"
 ];
 
 export const projectTests = [
@@ -21,6 +22,13 @@ export const projectTests = [
     id: "backtest-summary",
     label: "Backtest summary and equity curve are generated",
     run: ({ backtest }) => Boolean(backtest?.summary && backtest?.equityCurve?.length)
+  },
+  {
+    id: "transaction-costs",
+    label: "Backtest includes slippage and commission assumptions",
+    run: ({ backtest }) =>
+      Number.isFinite(backtest?.config?.slippagePercent) &&
+      Number.isFinite(backtest?.config?.commission)
   },
   {
     id: "scanner-results",

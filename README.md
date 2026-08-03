@@ -11,6 +11,7 @@ This project is intentionally safe by default: it simulates paper trades in the 
 - Moving-average crossover backtesting with configurable cash, windows, lookback, and risk.
 - Strategy selector with MA crossover, RSI reversion, MACD trend, and buy-and-hold benchmark.
 - Strategy comparison table for the selected symbol.
+- Backtest slippage and commission assumptions before paper testing.
 - Alpha V1 capability brief and in-app self tests to preserve project requirements.
 - Paper order ticket with buy/sell validation.
 - Paper portfolio with equity, exposure, realized P/L, positions, and recent trades saved in browser storage.
