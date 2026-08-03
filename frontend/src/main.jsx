@@ -502,6 +502,26 @@ function App() {
         return;
       }
 
+      if (plan.action === "buy-option") {
+        const selectedStrategy = strategyMap[plan.symbol];
+        const nextPortfolioState = placePaperOptionTrade(portfolioState, plan.optionIdea, {
+          side: "buy",
+          quantity: 1,
+          strategy: selectedStrategy?.strategy?.name || "Best available",
+          strategyScore: selectedStrategy?.score || null
+        });
+        setPortfolioState(nextPortfolioState);
+        recordAutomation({
+          action: "buy-option",
+          symbol: plan.symbol,
+          quantity: 1,
+          reason: plan.reason
+        });
+        setMessage(`Automation BUY OPTION: ${plan.optionIdea.underlying} ${plan.optionIdea.contractType.toUpperCase()} · ${plan.reason}`);
+        saveAutomationSnapshot(plan.reason);
+        return;
+      }
+
       const order = { symbol: plan.symbol, side: plan.action, quantity: plan.quantity };
       executePaperOrder(order);
       recordAutomation({ ...order, reason: plan.reason });
@@ -773,6 +793,11 @@ function App() {
             Current plan: <strong>{automationPlan.action.toUpperCase()}</strong>{" "}
             {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
             {automationPlan.reason}
+          </p>
+          <p className="signal-note">
+            Cash management: <strong>$1,000 account-aware sizing</strong> · max single trade{" "}
+            {automationMode === "bullish" ? "24%" : "16%"} cash · max exposure{" "}
+            {automationMode === "bullish" ? "55%" : "32%"}.
           </p>
           {automationPlan.symbol && strategyMap[automationPlan.symbol] && (
             <p className="signal-note">

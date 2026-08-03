@@ -631,13 +631,15 @@ export function evaluateAutomationPlan({
   strategyMap = {}
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
-  const maxExposurePercent = mode === "bullish" ? 65 : 40;
-  const minBuyScore = mode === "bullish" ? 64 : 72;
-  const allowedSymbols = new Set(watchlist.length ? watchlist : symbols);
+  const maxExposurePercent = mode === "bullish" ? 55 : 32;
+  const maxSingleTradeCashPercent = mode === "bullish" ? 0.24 : 0.16;
+  const minBuyScore = mode === "bullish" ? 64 : 70;
   const positions = new Map((portfolio?.positions || []).map((position) => [position.symbol, position]));
-  const candidates = (scanner?.results || []).filter((result) => allowedSymbols.has(result.symbol));
   const categoryRanks = rankAutomationCategories(scanner?.results || [], watchlist);
   const bestCategory = categoryRanks[0] || null;
+  const managedSymbols = bestCategory?.symbols?.length ? bestCategory.symbols : watchlist.length ? watchlist : symbols;
+  const allowedSymbols = new Set(managedSymbols);
+  const candidates = (scanner?.results || []).filter((result) => allowedSymbols.has(result.symbol));
   const optionsIdeas = buildOptionsIdeas(scanner?.results || []);
   const bestOptionIdea = optionsIdeas
     .filter((idea) => allowedSymbols.has(idea.underlying))
@@ -732,13 +734,62 @@ export function evaluateAutomationPlan({
     };
   }
 
+  const availableCash = Math.max(0, Number(portfolio?.cash || 0));
+  const maxTradeCash = Math.max(0, availableCash * maxSingleTradeCashPercent);
+  const quantity = Math.floor(maxTradeCash / Number(buyCandidate.price || 1));
+
+  if (quantity < 1) {
+    const optionFallback =
+      optionsEnabled &&
+      bestOptionIdea &&
+      bestOptionIdea.stance !== "hold" &&
+      bestOptionIdea.notionalCost <= Math.max(50, maxTradeCash);
+
+    if (optionFallback) {
+      return {
+        action: "buy-option",
+        symbol: bestOptionIdea.underlying,
+        quantity: 1,
+        optionIdea: bestOptionIdea,
+        reason: `Cash-aware sizing selected defined-risk option idea because one share of ${buyCandidate.symbol} exceeds per-trade cash limit.`,
+        profile,
+        bestCategory,
+        categoryRanks,
+        bestOptionIdea
+      };
+    }
+
+    return {
+      action: "hold",
+      reason: `Cash-aware sizing blocked entry: ${profile.name} mode allows about ${round(
+        maxSingleTradeCashPercent * 100
+      )}% of cash per trade, not enough for one share of ${buyCandidate.symbol}.`,
+      blockers: [
+        {
+          symbol: buyCandidate.symbol,
+          action: buyCandidate.action,
+          scannerScore: buyCandidate.score,
+          strategy: strategyMap[buyCandidate.symbol]?.strategy?.name || "n/a",
+          strategyScore: strategyMap[buyCandidate.symbol]?.score || 0,
+          liquidity: buyCandidate.intelligence?.liquidityGrade || "unknown",
+          volatility: buyCandidate.intelligence?.volatilityRegime || "unknown",
+          riskFlags: ["Position size too large for $1,000 risk limits."]
+        }
+      ],
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
+    };
+  }
+
   return {
     action: "buy",
     symbol: buyCandidate.symbol,
-    quantity: Math.max(1, Math.min(10, buyCandidate.suggestedQuantity)),
+    quantity,
     reason: `Automation entry: ${buyCandidate.reason} Strategy: ${
       strategyMap[buyCandidate.symbol]?.strategy?.name || "selected scanner strategy"
-    }.`,
+    }. Size capped at ${round(maxSingleTradeCashPercent * 100)}% of available cash.`,
     profile,
     bestCategory,
     categoryRanks,
