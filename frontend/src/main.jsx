@@ -243,7 +243,7 @@ function App() {
   }
 
   function submitTrade(event) {
-    event.preventDefault();
+    event?.preventDefault();
     setMessage("");
 
     try {
@@ -572,7 +572,7 @@ function App() {
 
         <article className="card">
           <h2>Paper Order Ticket</h2>
-          <form onSubmit={submitTrade} className="trade-form">
+          <div className="trade-form">
             <label>
               Symbol
               <select value={tradeForm.symbol} onChange={(event) => syncSymbol(event.target.value)}>
@@ -605,10 +605,10 @@ function App() {
                 />
               </label>
             </div>
-            <button type="submit" disabled={!market.length}>
+            <button type="button" onClick={submitTrade} disabled={!market.length}>
               Submit Paper Order
             </button>
-          </form>
+          </div>
           {selectedSignal && (
             <p className="signal-note">
               Live signal: <strong>{selectedSignal.action.toUpperCase()}</strong> ·{" "}
