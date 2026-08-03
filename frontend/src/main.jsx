@@ -638,6 +638,68 @@ function App() {
     ].slice(0, 100));
   }
 
+  function toggleAutomation() {
+    setMessage("");
+
+    if (automationEnabled) {
+      setAutomationEnabled(false);
+      recordAutomation({
+        action: "stopped",
+        symbol: "-",
+        quantity: 0,
+        reason: "Automation stopped manually."
+      });
+      setMessage("Automation stopped manually.");
+      return;
+    }
+
+    if (!marketClock.isRegularSession && !effectiveFuturesExtendedHours) {
+      const reason = `Automation not started: regular market is closed (${marketClock.label}). Enable futures extended-hours paper cycles if you intentionally want futures-only testing.`;
+      recordAutomation({
+        action: "start-blocked",
+        symbol: "-",
+        quantity: 0,
+        reason
+      });
+      setMessage(reason);
+      return;
+    }
+
+    if (automationPlan.profitLock?.hardDailyLossStop) {
+      const reason = "Automation not started: daily kill switch is active. Reset the paper session or wait for the next trading day.";
+      recordAutomation({
+        action: "start-blocked",
+        symbol: "-",
+        quantity: 0,
+        reason
+      });
+      setMessage(reason);
+      return;
+    }
+
+    if (automationPlan.profitLock?.secureDayProfit && !automationPlan.profitLock?.runnerLeft) {
+      const reason = "Automation not started: profit target was already secured for the day.";
+      recordAutomation({
+        action: "start-blocked",
+        symbol: "-",
+        quantity: 0,
+        reason
+      });
+      setMessage(reason);
+      return;
+    }
+
+    setAutomationEnabled(true);
+    recordAutomation({
+      action: "started",
+      symbol: "-",
+      quantity: 0,
+      reason: `Automation started in ${effectiveAutomationMode} mode with ${decisionWindowMinutes}-minute entry windows.`
+    });
+    setMessage(`Automation started. ${automationPlan.reason}`);
+    runAutomationCycle();
+  }
+
   function runAutomationCycle() {
     setMessage("");
 
@@ -1194,7 +1256,7 @@ function App() {
             <button
               type="button"
               className="buy-button"
-              onClick={() => setAutomationEnabled((current) => !current)}
+              onClick={toggleAutomation}
             >
               {automationEnabled ? "Stop Automation" : "Start Automation"}
             </button>
