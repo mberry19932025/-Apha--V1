@@ -540,13 +540,53 @@ export function rankAutomationCategories(scannerResults = [], watchlist = symbol
     .sort((a, b) => b.rankScore - a.rankScore);
 }
 
+export function selectBestStrategyForSymbol(symbol, baseOptions = {}, dataBySymbol = {}) {
+  const results = strategies.map((strategy) => {
+    const result = runBacktest(
+      {
+        ...baseOptions,
+        symbol,
+        strategy: strategy.id
+      },
+      dataBySymbol
+    );
+    const summary = result.summary;
+    const completedTrades = Number(summary.completedTrades || 0);
+    const score = Math.round(
+      50 +
+        Number(summary.returnPercent || 0) * 1.7 -
+        Number(summary.maxDrawdownPercent || 0) * 2.2 +
+        Number(summary.winRatePercent || 0) * 0.25 +
+        Math.min(30, Number(summary.profitFactor || 0) * 4) +
+        Math.min(10, completedTrades * 1.5) -
+        (completedTrades === 0 ? 20 : 0)
+    );
+
+    return {
+      strategy,
+      result,
+      score: Math.max(1, Math.min(99, score))
+    };
+  });
+
+  return results.sort((a, b) => b.score - a.score)[0];
+}
+
+export function buildStrategyMap(baseOptions = {}, dataBySymbol = {}, watchlist = symbols) {
+  const allowedSymbols = watchlist.length ? watchlist : symbols;
+  return Object.fromEntries(
+    allowedSymbols.map((symbol) => [symbol, selectBestStrategyForSymbol(symbol, baseOptions, dataBySymbol)])
+  );
+}
+
 export function evaluateAutomationPlan({
   scanner,
   portfolio,
   mode = "moderate",
   watchlist = symbols,
   dayTradeEnabled = true,
-  optionsEnabled = true
+  optionsEnabled = true,
+  strategyMap = {}
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
   const maxExposurePercent = mode === "bullish" ? 65 : 40;
@@ -605,9 +645,12 @@ export function evaluateAutomationPlan({
 
   const buyCandidate = candidates.find((result) => {
     const flags = result.intelligence?.riskFlags || [];
+    const selectedStrategy = strategyMap[result.symbol];
+    const strategyScore = selectedStrategy?.score || 50;
     return (
       result.action === "buy" &&
       result.score >= minBuyScore &&
+      strategyScore >= (mode === "bullish" ? 58 : 64) &&
       !positions.has(result.symbol) &&
       result.intelligence?.liquidityGrade !== "avoid" &&
       result.intelligence?.volatilityRegime !== "extreme" &&
@@ -641,7 +684,9 @@ export function evaluateAutomationPlan({
     action: "buy",
     symbol: buyCandidate.symbol,
     quantity: Math.max(1, Math.min(10, buyCandidate.suggestedQuantity)),
-    reason: `Automation entry: ${buyCandidate.reason}`,
+    reason: `Automation entry: ${buyCandidate.reason} Strategy: ${
+      strategyMap[buyCandidate.symbol]?.strategy?.name || "selected scanner strategy"
+    }.`,
     profile,
     bestCategory,
     categoryRanks,
@@ -1438,6 +1483,8 @@ export function placePaperTrade(state, market, order) {
     price: quote.price,
     gross: round(gross),
     realizedPnl: round(realizedPnl),
+    strategy: order.strategy || "Manual",
+    strategyScore: order.strategyScore || null,
     createdAt: new Date().toISOString()
   });
 
@@ -1528,6 +1575,8 @@ export function placePaperOptionTrade(state, optionIdea, order = {}) {
     price: round(premium),
     gross: round(gross),
     realizedPnl: round(realizedPnl),
+    strategy: order.strategy || "Manual",
+    strategyScore: order.strategyScore || null,
     description: `${optionIdea.underlying} ${optionIdea.strike} ${optionIdea.contractType.toUpperCase()} ${optionIdea.expiry}`,
     createdAt: new Date().toISOString()
   });

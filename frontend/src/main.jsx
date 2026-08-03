@@ -5,6 +5,7 @@ import {
   assetCatalog,
   buildOptionsIdeas,
   buildPortfolio,
+  buildStrategyMap,
   createInitialPortfolio,
   evaluateDiscipline,
   evaluateAutomationPlan,
@@ -179,6 +180,13 @@ function App() {
     () => rankAutomationCategories(scanner?.results || [], watchlist),
     [scanner, watchlist]
   );
+  const strategyMap = useMemo(() => {
+    const config = {
+      ...backtestForm,
+      riskPercent: Number(backtestForm.riskPercent) / 100
+    };
+    return buildStrategyMap(config, dataBySymbol, symbols);
+  }, [backtestForm, dataBySymbol]);
   const todayAutomationSnapshots = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     return automationSnapshots.filter((snapshot) => snapshot.tradeDate === today);
@@ -241,9 +249,10 @@ function App() {
         mode: automationMode,
         watchlist,
         dayTradeEnabled,
-        optionsEnabled
+        optionsEnabled,
+        strategyMap
       }),
-    [scanner, portfolio, automationMode, watchlist, dayTradeEnabled, optionsEnabled]
+    [scanner, portfolio, automationMode, watchlist, dayTradeEnabled, optionsEnabled, strategyMap]
   );
 
   useEffect(() => {
@@ -320,19 +329,22 @@ function App() {
 
   function executePaperOrder(order) {
     const activeMarket = market.length ? market : getMarketSnapshot();
-    const normalizedOrder = {
-      ...order,
-      quantity: Math.max(1, Number(order.quantity || 1))
-    };
+      const selectedStrategy = strategyMap[order.symbol];
+      const normalizedOrder = {
+        ...order,
+        quantity: Math.max(1, Number(order.quantity || 1)),
+        strategy: selectedStrategy?.strategy?.name || "Best available",
+        strategyScore: selectedStrategy?.score || null
+      };
 
     const nextPortfolioState = placePaperTrade(portfolioState, activeMarket, normalizedOrder);
     setPortfolioState(nextPortfolioState);
     const latestTrade = nextPortfolioState.trades.at(-1);
-    setMessage(
-      `${normalizedOrder.side.toUpperCase()} filled: ${latestTrade.quantity} ${latestTrade.symbol} at ${formatMoney(
-        latestTrade.price
-      )}.`
-    );
+      setMessage(
+        `${normalizedOrder.side.toUpperCase()} filled: ${latestTrade.quantity} ${latestTrade.symbol} at ${formatMoney(
+          latestTrade.price
+        )}. Strategy: ${normalizedOrder.strategy}.`
+      );
   }
 
   function submitTrade(event) {
@@ -362,16 +374,19 @@ function App() {
     setMessage("");
 
     try {
+      const selectedStrategy = strategyMap[idea.underlying];
       const nextPortfolioState = placePaperOptionTrade(portfolioState, idea, {
         side,
-        quantity: 1
+        quantity: 1,
+        strategy: selectedStrategy?.strategy?.name || "Best available",
+        strategyScore: selectedStrategy?.score || null
       });
       setPortfolioState(nextPortfolioState);
       const latestTrade = nextPortfolioState.trades.at(-1);
       setMessage(
         `${side.toUpperCase()} option filled: ${latestTrade.description} x ${latestTrade.quantity} at ${formatMoney(
           latestTrade.price
-        )} premium.`
+        )} premium. Strategy: ${latestTrade.strategy}.`
       );
     } catch (error) {
       setMessage(error.message);
@@ -452,7 +467,8 @@ function App() {
         mode: automationMode,
         watchlist,
         dayTradeEnabled,
-        optionsEnabled
+        optionsEnabled,
+        strategyMap
       });
 
       if (plan.action === "hold") {
@@ -695,6 +711,14 @@ function App() {
             {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
             {automationPlan.reason}
           </p>
+          {automationPlan.symbol && strategyMap[automationPlan.symbol] && (
+            <p className="signal-note">
+              Strategy selected for next trade:{" "}
+              <strong>
+                {strategyMap[automationPlan.symbol].strategy.name} · {strategyMap[automationPlan.symbol].score}/100
+              </strong>
+            </p>
+          )}
           <p className="signal-note">
             Best category today:{" "}
             <strong>
@@ -867,6 +891,15 @@ function App() {
                     {idea.expiry} · est. premium {formatMoney(idea.premium)} · max loss{" "}
                     {formatMoney(idea.notionalCost)} · score {idea.score}/100 · {idea.note}
                   </small>
+                  <small>
+                    Best underlying strategy:{" "}
+                    <strong>
+                      {strategyMap[idea.underlying]?.strategy?.name || "calculating"}{" "}
+                      {strategyMap[idea.underlying]?.score
+                        ? `· ${strategyMap[idea.underlying].score}/100`
+                        : ""}
+                    </strong>
+                  </small>
                   <span className="quick-actions inline-actions">
                     <button type="button" className="secondary mini" onClick={() => tradeOptionIdea(idea, "buy")}>
                       Paper Buy
@@ -1020,6 +1053,15 @@ function App() {
                 <div>
                   <strong>{result.symbol}</strong>
                   <small>{result.reason}</small>
+                  <small>
+                    Best strategy:{" "}
+                    <strong>
+                      {strategyMap[result.symbol]?.strategy?.name || "calculating"}{" "}
+                      {strategyMap[result.symbol]?.score
+                        ? `· ${strategyMap[result.symbol].score}/100`
+                        : ""}
+                    </strong>
+                  </small>
                 </div>
                 <div className="scan-score">
                   <span className={`pill ${result.action}`}>{result.action}</span>
@@ -1856,6 +1898,7 @@ function App() {
                 <th>Side</th>
                 <th>Qty</th>
                 <th>Gross</th>
+                <th>Strategy</th>
               </tr>
             </thead>
             <tbody>
@@ -1869,11 +1912,12 @@ function App() {
                     </td>
                     <td>{trade.quantity}</td>
                     <td>{formatMoney(trade.gross)}</td>
+                    <td>{trade.strategy || "-"}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="5">No paper trades yet.</td>
+                  <td colSpan="6">No paper trades yet.</td>
                 </tr>
               )}
             </tbody>
