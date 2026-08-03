@@ -1,4 +1,4 @@
-const symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ"];
+const symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ", "IWM", "DIA", "TLT", "GLD"];
 
 const basePrices = {
   AAPL: 212.45,
@@ -6,7 +6,11 @@ const basePrices = {
   NVDA: 118.72,
   TSLA: 231.6,
   SPY: 552.38,
-  QQQ: 472.19
+  QQQ: 472.19,
+  IWM: 218.44,
+  DIA: 404.12,
+  TLT: 92.36,
+  GLD: 229.75
 };
 
 export function getSupportedSymbols() {

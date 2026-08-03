@@ -2,9 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   analyzeLearningJournal,
+  assetCatalog,
+  buildOptionsIdeas,
   buildPortfolio,
   createInitialPortfolio,
   evaluateDiscipline,
+  evaluateAutomationPlan,
   evaluateReadiness,
   getDataStatus,
   getMarketSnapshot,
@@ -25,6 +28,8 @@ import "./styles.css";
 const portfolioKey = "apex-alpha-static-portfolio";
 const uploadedDataKey = "apex-alpha-uploaded-data";
 const learningJournalKey = "apex-alpha-learning-journal";
+const watchlistKey = "apex-alpha-watchlist";
+const automationLogKey = "apex-alpha-automation-log";
 
 function formatMoney(value) {
   return new Intl.NumberFormat("en-US", {
@@ -42,6 +47,10 @@ function formatCompact(value) {
     notation: "compact",
     maximumFractionDigits: 1
   }).format(value || 0);
+}
+
+function makeId() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function buildPath(points) {
@@ -93,6 +102,16 @@ function loadLearningJournal() {
   }
 }
 
+function loadStoredArray(key, fallback) {
+  try {
+    const stored = localStorage.getItem(key);
+    const parsed = stored ? JSON.parse(stored) : fallback;
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function App() {
   const [dataBySymbol, setDataBySymbol] = useState({});
   const [bundledData, setBundledData] = useState({});
@@ -132,6 +151,10 @@ function App() {
     minTrades: 2
   });
   const [learningJournal, setLearningJournal] = useState(loadLearningJournal);
+  const [watchlist, setWatchlist] = useState(() => loadStoredArray(watchlistKey, ["SPY", "QQQ"]));
+  const [automationEnabled, setAutomationEnabled] = useState(false);
+  const [automationMode, setAutomationMode] = useState("moderate");
+  const [automationLog, setAutomationLog] = useState(() => loadStoredArray(automationLogKey, []));
   const [backtest, setBacktest] = useState(null);
 
   const signals = useMemo(() => getSignals(market), [market]);
@@ -143,6 +166,7 @@ function App() {
   );
   const bestSetup = scanner?.results?.[0];
   const marketIntelligence = scanner?.results || [];
+  const optionsIdeas = useMemo(() => buildOptionsIdeas(scanner?.results || [], market), [scanner, market]);
   const equityPath = buildPath(backtest?.equityCurve || []);
   const currentEvaluation = useMemo(
     () => evaluateDiscipline(backtest, disciplineForm),
@@ -193,6 +217,16 @@ function App() {
     [backtest, currentEvaluation, dataStatus, learningSummary, portfolio, readiness, scanner, strategyComparison]
   );
   const passedTests = selfTests.filter((test) => test.passed).length;
+  const automationPlan = useMemo(
+    () =>
+      evaluateAutomationPlan({
+        scanner,
+        portfolio,
+        mode: automationMode,
+        watchlist
+      }),
+    [scanner, portfolio, automationMode, watchlist]
+  );
 
   useEffect(() => {
     async function init() {
@@ -231,11 +265,31 @@ function App() {
   }, [learningJournal]);
 
   useEffect(() => {
+    localStorage.setItem(watchlistKey, JSON.stringify(watchlist));
+  }, [watchlist]);
+
+  useEffect(() => {
+    localStorage.setItem(automationLogKey, JSON.stringify(automationLog));
+  }, [automationLog]);
+
+  useEffect(() => {
     const timer = setInterval(() => {
       setMarket(getMarketSnapshot());
     }, 15000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!automationEnabled) {
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      runAutomationCycle();
+    }, 20000);
+
+    return () => clearInterval(timer);
+  }, [automationEnabled, automationPlan, portfolioState, market]);
 
   function syncSymbol(symbol) {
     setTradeForm((current) => ({ ...current, symbol }));
@@ -278,6 +332,47 @@ function App() {
       setTradeForm(order);
       executePaperOrder(order);
     } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function toggleWatch(symbol) {
+    setWatchlist((current) =>
+      current.includes(symbol)
+        ? current.filter((item) => item !== symbol)
+        : [...current, symbol]
+    );
+  }
+
+  function recordAutomation(entry) {
+    setAutomationLog((current) => [
+      { id: makeId(), createdAt: new Date().toISOString(), ...entry },
+      ...current
+    ].slice(0, 25));
+  }
+
+  function runAutomationCycle() {
+    setMessage("");
+
+    try {
+      const plan = evaluateAutomationPlan({
+        scanner,
+        portfolio,
+        mode: automationMode,
+        watchlist
+      });
+
+      if (plan.action === "hold") {
+        recordAutomation({ action: "hold", symbol: "-", quantity: 0, reason: plan.reason });
+        setMessage(`Automation HOLD: ${plan.reason}`);
+        return;
+      }
+
+      const order = { symbol: plan.symbol, side: plan.action, quantity: plan.quantity };
+      executePaperOrder(order);
+      recordAutomation({ ...order, reason: plan.reason });
+    } catch (error) {
+      recordAutomation({ action: "error", symbol: "-", quantity: 0, reason: error.message });
       setMessage(error.message);
     }
   }
@@ -366,7 +461,7 @@ function App() {
       strategies.find((strategy) => strategy.id === backtest.config.strategy)?.name ||
       backtest.config.strategy;
     const run = {
-      id: crypto.randomUUID(),
+      id: makeId(),
       createdAt: new Date().toISOString(),
       symbol: backtest.config.symbol,
       strategy: strategyName,
@@ -455,6 +550,134 @@ function App() {
             Quick Sell 1 SPY
           </button>
         </div>
+      </section>
+
+      <section className="automation-grid">
+        <article className="card">
+          <div className="card-header">
+            <h2>Rule-Based Paper Automation</h2>
+            <span className={`pill ${automationEnabled ? "buy" : "hold"}`}>
+              {automationEnabled ? "running" : "stopped"}
+            </span>
+          </div>
+          <div className="form-row">
+            <label>
+              Automation Mode
+              <select
+                value={automationMode}
+                onChange={(event) => setAutomationMode(event.target.value)}
+              >
+                <option value="moderate">Moderate</option>
+                <option value="bullish">Bullish</option>
+              </select>
+            </label>
+            <label>
+              Watched Symbols
+              <input value={watchlist.join(", ")} readOnly />
+            </label>
+          </div>
+          <p className="signal-note">
+            Current plan: <strong>{automationPlan.action.toUpperCase()}</strong>{" "}
+            {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
+            {automationPlan.reason}
+          </p>
+          <div className="quick-actions">
+            <button
+              type="button"
+              className="buy-button"
+              onClick={() => setAutomationEnabled((current) => !current)}
+            >
+              {automationEnabled ? "Stop Automation" : "Start Automation"}
+            </button>
+            <button type="button" className="secondary" onClick={runAutomationCycle}>
+              Run One Cycle Now
+            </button>
+          </div>
+        </article>
+
+        <article className="card">
+          <div className="card-header">
+            <h2>Automation Log</h2>
+            <button type="button" className="secondary danger" onClick={() => setAutomationLog([])}>
+              Clear
+            </button>
+          </div>
+          <div className="brief-list">
+            {automationLog.length ? (
+              automationLog.slice(0, 5).map((entry) => (
+                <div className="brief-item" key={entry.id}>
+                  <span className={`pill ${entry.action === "buy" ? "buy" : entry.action === "sell" ? "sell" : "hold"}`}>
+                    {entry.action}
+                  </span>
+                  <span>
+                    <strong>
+                      {entry.symbol} {entry.quantity ? `x ${entry.quantity}` : ""}
+                    </strong>
+                    <small>{entry.reason}</small>
+                  </span>
+                </div>
+              ))
+            ) : (
+              <p className="signal-note">No automation cycles yet.</p>
+            )}
+          </div>
+        </article>
+      </section>
+
+      <section className="knowledge-grid">
+        <article className="card">
+          <div className="card-header">
+            <h2>Asset Coverage</h2>
+            <span className="pill hold">stocks + ETFs + options</span>
+          </div>
+          <div className="brief-list">
+            <div className="brief-item">
+              <span className="checkmark">✓</span>
+              <span>
+                <strong>Stocks</strong>
+                <small>{assetCatalog.stocks.join(", ")}</small>
+              </span>
+            </div>
+            <div className="brief-item">
+              <span className="checkmark">✓</span>
+              <span>
+                <strong>ETFs</strong>
+                <small>{assetCatalog.etfs.join(", ")}</small>
+              </span>
+            </div>
+            <div className="brief-item">
+              <span className="checkmark">✓</span>
+              <span>
+                <strong>Options</strong>
+                <small>Simulated watch ideas only. No real options execution.</small>
+              </span>
+            </div>
+          </div>
+        </article>
+
+        <article className="card">
+          <div className="card-header">
+            <h2>Options Watch</h2>
+            <span className="pill hold">paper ideas</span>
+          </div>
+          <div className="brief-list">
+            {optionsIdeas.map((idea) => (
+              <div className="brief-item" key={`${idea.underlying}-${idea.contractType}`}>
+                <span className={`pill ${idea.stance === "buy" ? "buy" : idea.stance === "sell" ? "sell" : "hold"}`}>
+                  {idea.contractType}
+                </span>
+                <span>
+                  <strong>
+                    {idea.underlying} {idea.strike} {idea.contractType.toUpperCase()}
+                  </strong>
+                  <small>
+                    {idea.expiry} · score {idea.score}/100 · {idea.note}
+                  </small>
+                </span>
+              </div>
+            ))}
+          </div>
+        </article>
       </section>
 
       <section className="brief-grid">
@@ -591,12 +814,7 @@ function App() {
           </div>
           <div className="signals">
             {scanner?.results?.map((result) => (
-              <button
-                type="button"
-                className="scan-row"
-                key={result.symbol}
-                onClick={() => useScanPick(result)}
-              >
+              <div className="scan-row" key={result.symbol}>
                 <div>
                   <strong>{result.symbol}</strong>
                   <small>{result.reason}</small>
@@ -604,8 +822,14 @@ function App() {
                 <div className="scan-score">
                   <span className={`pill ${result.action}`}>{result.action}</span>
                   <strong>{result.score}</strong>
+                  <button type="button" className="secondary mini" onClick={() => useScanPick(result)}>
+                    Use
+                  </button>
+                  <button type="button" className="secondary mini" onClick={() => toggleWatch(result.symbol)}>
+                    {watchlist.includes(result.symbol) ? "Watching" : "Watch"}
+                  </button>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </article>

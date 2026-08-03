@@ -4,7 +4,13 @@ export { tradingKnowledge };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export const symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ"];
+export const symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ", "IWM", "DIA", "TLT", "GLD"];
+
+export const assetCatalog = {
+  stocks: ["AAPL", "MSFT", "NVDA", "TSLA"],
+  etfs: ["SPY", "QQQ", "IWM", "DIA", "TLT", "GLD"],
+  optionsUnderlyings: ["SPY", "QQQ", "AAPL", "NVDA", "TSLA"]
+};
 
 export const strategies = [
   { id: "ma-crossover", name: "MA Crossover" },
@@ -15,6 +21,8 @@ export const strategies = [
 
 export const riskProfiles = [
   { id: "capital-guard", name: "Capital Guard", maxRiskPercent: 0.12 },
+  { id: "moderate", name: "Moderate", maxRiskPercent: 0.16 },
+  { id: "bullish", name: "Bullish", maxRiskPercent: 0.24 },
   { id: "moderate-bullish", name: "Moderate Bullish", maxRiskPercent: 0.2 },
   { id: "pattern-confirmed", name: "Pattern Confirmed", maxRiskPercent: 0.3 }
 ];
@@ -25,7 +33,11 @@ const basePrices = {
   NVDA: 118.72,
   TSLA: 231.6,
   SPY: 552.38,
-  QQQ: 472.19
+  QQQ: 472.19,
+  IWM: 218.44,
+  DIA: 404.12,
+  TLT: 92.36,
+  GLD: 229.75
 };
 
 const profiles = {
@@ -34,7 +46,11 @@ const profiles = {
   NVDA: { start: 91, trend: 0.0012, cycle: 0.04, noise: 0.022 },
   TSLA: { start: 210, trend: 0.00025, cycle: 0.055, noise: 0.028 },
   SPY: { start: 495, trend: 0.00034, cycle: 0.014, noise: 0.007 },
-  QQQ: { start: 425, trend: 0.00048, cycle: 0.02, noise: 0.01 }
+  QQQ: { start: 425, trend: 0.00048, cycle: 0.02, noise: 0.01 },
+  IWM: { start: 202, trend: 0.00028, cycle: 0.022, noise: 0.012 },
+  DIA: { start: 384, trend: 0.00022, cycle: 0.013, noise: 0.007 },
+  TLT: { start: 96, trend: -0.00005, cycle: 0.018, noise: 0.009 },
+  GLD: { start: 205, trend: 0.00031, cycle: 0.017, noise: 0.008 }
 };
 
 function round(value, decimals = 2) {
@@ -426,13 +442,103 @@ function detectSetupPattern(candles, index, { shortWindow, longWindow }) {
 function resolveRiskProfile(profileId, pattern) {
   const requestedProfile = riskProfiles.some((profile) => profile.id === profileId)
     ? profileId
-    : "moderate-bullish";
+    : "moderate";
 
   if (requestedProfile === "pattern-confirmed" && !pattern.confirmed) {
     return riskProfiles.find((profile) => profile.id === "moderate-bullish");
   }
 
   return riskProfiles.find((profile) => profile.id === requestedProfile);
+}
+
+export function buildOptionsIdeas(scannerResults = [], market = getMarketSnapshot()) {
+  return assetCatalog.optionsUnderlyings.map((underlying) => {
+    const quote = market.find((item) => item.symbol === underlying);
+    const setup = scannerResults.find((result) => result.symbol === underlying);
+    const direction = setup?.action === "sell" ? "put" : "call";
+    const price = quote?.price || basePrices[underlying];
+    const strikeStep = price > 400 ? 5 : price > 100 ? 2.5 : 1;
+    const rawStrike = direction === "call" ? price * 1.02 : price * 0.98;
+    const strike = round(Math.round(rawStrike / strikeStep) * strikeStep, 2);
+    const score = Math.max(1, Math.min(99, Math.round((setup?.score || 50) * 0.7)));
+
+    return {
+      underlying,
+      contractType: direction,
+      strike,
+      expiry: "simulated 30-45 DTE",
+      score,
+      stance: setup?.action || "hold",
+      note:
+        setup?.action === "hold"
+          ? "Watch only. No simulated options entry until underlying setup improves."
+          : "Educational options idea only. Use defined-risk paper sizing before any real options workflow."
+    };
+  });
+}
+
+export function evaluateAutomationPlan({
+  scanner,
+  portfolio,
+  mode = "moderate",
+  watchlist = symbols
+} = {}) {
+  const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
+  const maxExposurePercent = mode === "bullish" ? 65 : 40;
+  const minBuyScore = mode === "bullish" ? 64 : 72;
+  const allowedSymbols = new Set(watchlist.length ? watchlist : symbols);
+  const positions = new Map((portfolio?.positions || []).map((position) => [position.symbol, position]));
+  const candidates = (scanner?.results || []).filter((result) => allowedSymbols.has(result.symbol));
+  const existingSell = candidates.find(
+    (result) => result.action === "sell" && positions.has(result.symbol)
+  );
+
+  if (existingSell) {
+    const position = positions.get(existingSell.symbol);
+    return {
+      action: "sell",
+      symbol: existingSell.symbol,
+      quantity: position.quantity,
+      reason: `Automation exit: ${existingSell.reason}`,
+      profile
+    };
+  }
+
+  const buyCandidate = candidates.find((result) => {
+    const flags = result.intelligence?.riskFlags || [];
+    return (
+      result.action === "buy" &&
+      result.score >= minBuyScore &&
+      !positions.has(result.symbol) &&
+      result.intelligence?.liquidityGrade !== "avoid" &&
+      result.intelligence?.volatilityRegime !== "extreme" &&
+      flags.length <= (mode === "bullish" ? 1 : 0)
+    );
+  });
+
+  if (!buyCandidate) {
+    return {
+      action: "hold",
+      reason: "No watched setup passes automation score, liquidity, volatility, and position rules.",
+      profile
+    };
+  }
+
+  if ((portfolio?.exposurePercent || 0) >= maxExposurePercent) {
+    return {
+      action: "hold",
+      reason: `Exposure limit reached for ${profile.name} mode.`,
+      profile
+    };
+  }
+
+  return {
+    action: "buy",
+    symbol: buyCandidate.symbol,
+    quantity: Math.max(1, Math.min(10, buyCandidate.suggestedQuantity)),
+    reason: `Automation entry: ${buyCandidate.reason}`,
+    profile
+  };
 }
 
 export function runBacktest(options = {}, dataBySymbol = {}) {
@@ -1177,7 +1283,7 @@ export function placePaperTrade(state, market, order) {
 
   next.trades.push({
     id:
-      crypto?.randomUUID?.() ||
+      globalThis.crypto?.randomUUID?.() ||
       `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     symbol,
     side,

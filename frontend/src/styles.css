@@ -143,6 +143,13 @@ h2 {
   margin-bottom: 18px;
 }
 
+.automation-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
 .summary-strip {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -293,6 +300,12 @@ button.secondary {
   background: rgba(31, 39, 36, 0.86);
 }
 
+button.mini {
+  min-width: auto;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+}
+
 button.danger {
   color: #ffe4e4;
   border-color: rgba(255, 138, 138, 0.42);
@@ -379,6 +392,7 @@ button:disabled {
   color: #edf3f2;
   background: rgba(31, 39, 36, 0.72);
   text-align: left;
+  border-radius: 8px;
 }
 
 .scan-row strong,
@@ -544,6 +558,7 @@ button:disabled {
   .grid,
   .brief-grid,
   .knowledge-grid,
+  .automation-grid,
   .scanner-grid,
   .backtest-layout,
   .discipline-grid,
