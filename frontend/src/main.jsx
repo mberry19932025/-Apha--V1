@@ -40,6 +40,7 @@ const automationLogKey = "apex-alpha-automation-log";
 const automationSnapshotsKey = "apex-alpha-automation-snapshots";
 const sessionPeakEquityKey = "apex-alpha-session-peak-equity";
 const emergencyStopKey = "apex-alpha-emergency-stop";
+const recoveryWatchlist = ["SPY", "DIA", "IWM", "QQQ"];
 
 function formatMoney(value) {
   return new Intl.NumberFormat("en-US", {
@@ -181,7 +182,7 @@ function App() {
     minTrades: 2
   });
   const [learningJournal, setLearningJournal] = useState(loadLearningJournal);
-  const [watchlist, setWatchlist] = useState(() => loadStoredArray(watchlistKey, ["SPY", "QQQ"]));
+  const [watchlist, setWatchlist] = useState(() => loadStoredArray(watchlistKey, recoveryWatchlist));
   const [automationEnabled, setAutomationEnabled] = useState(false);
   const [emergencyStopActive, setEmergencyStopActive] = useState(() =>
     loadStoredBoolean(emergencyStopKey, false)
@@ -594,6 +595,24 @@ function App() {
         ? current.filter((item) => item !== symbol)
         : [...current, symbol]
     );
+  }
+
+  function applyRecoveryPreset() {
+    setAutomationEnabled(false);
+    setBeginnerSafeMode(true);
+    setAutomationMode("moderate");
+    setOptionsEnabled(false);
+    setAllowFuturesExtendedHours(false);
+    setDecisionWindowMinutes(5);
+    setMaxTradesPerDay(3);
+    setWatchlist(recoveryWatchlist);
+    recordAutomation({
+      action: "recovery-preset",
+      symbol: "-",
+      quantity: 0,
+      reason: "Applied recovery preset: SPY, DIA, IWM, QQQ; Moderate; Safe Mode; no options; no extended-hours futures; 5-minute windows; max 3 entries."
+    });
+    setMessage("Recovery preset applied. Automation is stopped; run one cycle only after the account stabilizes.");
   }
 
   function recordAutomation(entry) {
@@ -1305,7 +1324,7 @@ function App() {
           </p>
           {automationPlan.adaptiveRisk?.returnPercent < 0 && (
             <p className="signal-note loss">
-              Loss mode active: new entries require stronger evidence, size is reduced, and options fallback is disabled.
+              Loss mode active: no new entries while account is red. Use Recovery Preset to focus on liquid ETFs only.
             </p>
           )}
           <p className="signal-note">
@@ -1364,6 +1383,9 @@ function App() {
             </button>
             <button type="button" className="secondary" onClick={runAutomationCycle}>
               Run One Cycle Now
+            </button>
+            <button type="button" className="secondary" onClick={applyRecoveryPreset}>
+              Apply Recovery Preset
             </button>
             <button type="button" className="secondary" onClick={() => saveAutomationSnapshot("Manual save for today's check")}>
               Save Today Snapshot
