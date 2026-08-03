@@ -628,6 +628,119 @@ export function buildStrategyMap(baseOptions = {}, dataBySymbol = {}, watchlist 
   );
 }
 
+function getTradeAssetType(trade = {}) {
+  if (trade.assetType) {
+    return trade.assetType;
+  }
+  if (trade.contractId) {
+    return "option";
+  }
+  return "stock";
+}
+
+function createEmptyLearningBucket(id) {
+  return {
+    id,
+    trades: 0,
+    wins: 0,
+    losses: 0,
+    realizedPnl: 0,
+    averagePnl: 0,
+    winRate: 0,
+    scoreAdjustment: 0,
+    confidence: "new"
+  };
+}
+
+function scoreLearningBucket(bucket) {
+  if (!bucket.trades) {
+    return bucket;
+  }
+
+  const winRate = (bucket.wins / bucket.trades) * 100;
+  const averagePnl = bucket.realizedPnl / bucket.trades;
+  const confidenceMultiplier = Math.min(1, bucket.trades / 8);
+  const winRateEdge = (winRate - 50) / 10;
+  const pnlEdge = Math.max(-3, Math.min(3, averagePnl / 15));
+  const rawAdjustment = (winRateEdge + pnlEdge) * 2.5 * confidenceMultiplier;
+
+  return {
+    ...bucket,
+    realizedPnl: round(bucket.realizedPnl),
+    averagePnl: round(averagePnl),
+    winRate: round(winRate, 1),
+    scoreAdjustment: round(Math.max(-10, Math.min(10, rawAdjustment)), 1),
+    confidence: bucket.trades >= 8 ? "tested" : bucket.trades >= 3 ? "forming" : "new"
+  };
+}
+
+export function buildPaperLearningMemory(trades = []) {
+  const bySymbol = {};
+  const byStrategy = {};
+  const byAssetType = {};
+  const closedTrades = (trades || []).filter((trade) => Number(trade.realizedPnl || 0) !== 0);
+
+  closedTrades.forEach((trade) => {
+    const pnl = Number(trade.realizedPnl || 0);
+    const symbol = String(trade.symbol || "UNKNOWN").toUpperCase();
+    const strategy = trade.strategy || "Manual";
+    const assetType = getTradeAssetType(trade);
+
+    [
+      [bySymbol, symbol],
+      [byStrategy, strategy],
+      [byAssetType, assetType]
+    ].forEach(([target, key]) => {
+      target[key] ||= createEmptyLearningBucket(key);
+      target[key].trades += 1;
+      target[key].realizedPnl += pnl;
+      if (pnl > 0) {
+        target[key].wins += 1;
+      } else {
+        target[key].losses += 1;
+      }
+    });
+  });
+
+  Object.keys(bySymbol).forEach((key) => {
+    bySymbol[key] = scoreLearningBucket(bySymbol[key]);
+  });
+  Object.keys(byStrategy).forEach((key) => {
+    byStrategy[key] = scoreLearningBucket(byStrategy[key]);
+  });
+  Object.keys(byAssetType).forEach((key) => {
+    byAssetType[key] = scoreLearningBucket(byAssetType[key]);
+  });
+
+  const allBuckets = [...Object.values(bySymbol), ...Object.values(byStrategy), ...Object.values(byAssetType)];
+  const strongest = allBuckets.sort((a, b) => b.scoreAdjustment - a.scoreAdjustment)[0] || null;
+  const weakest = allBuckets.sort((a, b) => a.scoreAdjustment - b.scoreAdjustment)[0] || null;
+
+  return {
+    closedTrades: closedTrades.length,
+    bySymbol,
+    byStrategy,
+    byAssetType,
+    strongest,
+    weakest,
+    summary:
+      closedTrades.length < 3
+        ? "Learning active: needs more closed paper trades before it strongly changes behavior."
+        : strongest?.scoreAdjustment > 0
+          ? `Learning active: favoring ${strongest.id} by ${strongest.scoreAdjustment} score points from paper results.`
+          : weakest?.scoreAdjustment < 0
+            ? `Learning active: reducing ${weakest.id} by ${Math.abs(weakest.scoreAdjustment)} score points from paper losses.`
+            : "Learning active: no strong winner or loser yet."
+  };
+}
+
+function getLearningAdjustment(learningMemory = {}, { symbol, strategy, assetType } = {}) {
+  const symbolAdjustment = learningMemory.bySymbol?.[symbol]?.scoreAdjustment || 0;
+  const strategyAdjustment = learningMemory.byStrategy?.[strategy]?.scoreAdjustment || 0;
+  const assetAdjustment = learningMemory.byAssetType?.[assetType]?.scoreAdjustment || 0;
+  return round(symbolAdjustment * 0.5 + strategyAdjustment * 0.35 + assetAdjustment * 0.15, 1);
+}
+
 export function getAdaptiveRiskSettings(portfolio = {}, mode = "moderate") {
   const equity = Number(portfolio.equity || portfolio.startingCash || 3000);
   const startingCash = Number(portfolio.startingCash || 3000);
@@ -758,6 +871,7 @@ export function evaluateAutomationPlan({
   optionsEnabled = true,
   strategyMap = {},
   automationLog = [],
+  learningMemory = buildPaperLearningMemory(portfolio?.trades || []),
   futuresEnabled = true,
   marketClock = getMarketClock(),
   allowFuturesExtendedHours = false,
@@ -795,10 +909,44 @@ export function evaluateAutomationPlan({
   const bestCategory = categoryRanks[0] || null;
   const managedSymbols = bestCategory?.symbols?.length ? bestCategory.symbols : watchlist.length ? watchlist : symbols;
   const allowedSymbols = new Set(managedSymbols);
-  const candidates = (scanner?.results || []).filter((result) => allowedSymbols.has(result.symbol));
+  const candidates = (scanner?.results || [])
+    .filter((result) => allowedSymbols.has(result.symbol))
+    .map((result) => {
+      const selectedStrategy = strategyMap[result.symbol];
+      const assetType = assetCatalog.futures.includes(result.symbol)
+        ? "future"
+        : assetCatalog.etfs.includes(result.symbol)
+          ? "etf"
+          : "stock";
+      const learningAdjustment = getLearningAdjustment(learningMemory, {
+        symbol: result.symbol,
+        strategy: selectedStrategy?.strategy?.name || "n/a",
+        assetType
+      });
+      return {
+        ...result,
+        rawScore: result.score,
+        score: round(Math.max(0, Math.min(100, Number(result.score || 0) + learningAdjustment))),
+        learningAdjustment
+      };
+    });
   const optionsIdeas = buildOptionsIdeas(scanner?.results || []);
   const bestOptionIdea = optionsIdeas
     .filter((idea) => allowedSymbols.has(idea.underlying))
+    .map((idea) => {
+      const selectedStrategy = strategyMap[idea.underlying];
+      const learningAdjustment = getLearningAdjustment(learningMemory, {
+        symbol: idea.underlying,
+        strategy: selectedStrategy?.strategy?.name || "n/a",
+        assetType: "option"
+      });
+      return {
+        ...idea,
+        rawScore: idea.score,
+        score: round(Math.max(0, Math.min(100, Number(idea.score || 0) + learningAdjustment))),
+        learningAdjustment
+      };
+    })
     .sort((a, b) => b.score - a.score)[0] || null;
   const dayTradeExit = dayTradeEnabled
     ? (portfolio?.positions || []).find((position) => {
@@ -830,7 +978,8 @@ export function evaluateAutomationPlan({
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
       adaptiveRisk,
-      marketClock
+      marketClock,
+      learningMemory
     };
   }
 
@@ -1005,7 +1154,10 @@ export function evaluateAutomationPlan({
   const buyCandidate = candidates.find((result) => {
     const flags = result.intelligence?.riskFlags || [];
     const selectedStrategy = strategyMap[result.symbol];
-    const strategyScore = selectedStrategy?.score || 50;
+    const strategyScore = Math.max(
+      0,
+      Math.min(100, Number(selectedStrategy?.score || 50) + Number(result.learningAdjustment || 0) * 0.5)
+    );
     return (
       result.action === "buy" &&
       result.score >= minBuyScore &&
@@ -1019,13 +1171,17 @@ export function evaluateAutomationPlan({
 
   if (!buyCandidate) {
     const futuresCandidate = futuresEnabled && futuresAllowedByClock && futuresPolicy.canTradeFutures && adaptiveRisk.returnPercent >= 0
-      ? (scanner?.results || []).find((result) => {
+      ? candidates.find((result) => {
           const selectedStrategy = strategyMap[result.symbol];
+          const strategyScore = Math.max(
+            0,
+            Math.min(100, Number(selectedStrategy?.score || 0) + Number(result.learningAdjustment || 0) * 0.5)
+          );
           return (
             assetCatalog.futures.includes(result.symbol) &&
             result.action === "buy" &&
             result.score >= (mode === "bullish" ? 66 : 72) &&
-            (selectedStrategy?.score || 0) >= (mode === "bullish" ? 58 : 64) &&
+            strategyScore >= (mode === "bullish" ? 58 : 64) &&
             result.intelligence?.volatilityRegime !== "extreme"
           );
         })
@@ -1055,6 +1211,7 @@ export function evaluateAutomationPlan({
         scannerScore: result.score,
         strategy: strategyMap[result.symbol]?.strategy?.name || "n/a",
         strategyScore: strategyMap[result.symbol]?.score || 0,
+        learningAdjustment: result.learningAdjustment || 0,
         liquidity: result.intelligence?.liquidityGrade || "unknown",
         volatility: result.intelligence?.volatilityRegime || "unknown",
         riskFlags: result.intelligence?.riskFlags || []
@@ -1121,6 +1278,7 @@ export function evaluateAutomationPlan({
           scannerScore: buyCandidate.score,
           strategy: strategyMap[buyCandidate.symbol]?.strategy?.name || "n/a",
           strategyScore: strategyMap[buyCandidate.symbol]?.score || 0,
+          learningAdjustment: buyCandidate.learningAdjustment || 0,
           liquidity: buyCandidate.intelligence?.liquidityGrade || "unknown",
           volatility: buyCandidate.intelligence?.volatilityRegime || "unknown",
           riskFlags: ["Position size too large for current adaptive risk limits."]
@@ -1141,7 +1299,7 @@ export function evaluateAutomationPlan({
     quantity,
     reason: `Automation entry: ${buyCandidate.reason} Strategy: ${
       strategyMap[buyCandidate.symbol]?.strategy?.name || "selected scanner strategy"
-    }. Size capped at ${round(maxSingleTradeCashPercent * 100)}% of available cash.`,
+    }. Learning adjustment: ${buyCandidate.learningAdjustment >= 0 ? "+" : ""}${buyCandidate.learningAdjustment}. Size capped at ${round(maxSingleTradeCashPercent * 100)}% of available cash.`,
     profile,
     bestCategory,
     categoryRanks,
@@ -1961,6 +2119,7 @@ export function placePaperTrade(state, market, order) {
     id:
       globalThis.crypto?.randomUUID?.() ||
       `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    assetType: assetCatalog.etfs.includes(symbol) ? "etf" : "stock",
     symbol,
     side,
     quantity,

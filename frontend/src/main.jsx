@@ -4,6 +4,7 @@ import {
   analyzeLearningJournal,
   assetCatalog,
   buildOptionsIdeas,
+  buildPaperLearningMemory,
   buildPortfolio,
   buildStrategyMap,
   createInitialPortfolio,
@@ -217,6 +218,10 @@ function App() {
     [backtest, disciplineForm]
   );
   const learningSummary = useMemo(() => analyzeLearningJournal(learningJournal), [learningJournal]);
+  const paperLearningMemory = useMemo(
+    () => buildPaperLearningMemory(portfolioState.trades || []),
+    [portfolioState.trades]
+  );
   const readiness = useMemo(
     () =>
       evaluateReadiness({
@@ -277,6 +282,7 @@ function App() {
         optionsEnabled: effectiveOptionsEnabled,
         strategyMap,
         automationLog,
+        learningMemory: paperLearningMemory,
         futuresEnabled: true,
         marketClock,
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
@@ -291,6 +297,7 @@ function App() {
       effectiveOptionsEnabled,
       strategyMap,
       automationLog,
+      paperLearningMemory,
       marketClock,
       effectiveFuturesExtendedHours,
       sessionPeakEquity
@@ -407,6 +414,7 @@ function App() {
     dayTradeEnabled,
     effectiveOptionsEnabled,
     effectiveFuturesExtendedHours,
+    paperLearningMemory,
     marketClock
   ]);
 
@@ -535,6 +543,7 @@ function App() {
       allowFuturesExtendedHours,
       effectiveFuturesExtendedHours,
       beginnerSafeMode,
+      paperLearningMemory,
       watchlist,
       bestCategory: automationPlan.bestCategory,
       bestOptionIdea: automationPlan.bestOptionIdea,
@@ -588,6 +597,7 @@ function App() {
         optionsEnabled: effectiveOptionsEnabled,
         strategyMap,
         automationLog,
+        learningMemory: paperLearningMemory,
         futuresEnabled: true,
         marketClock,
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
@@ -984,6 +994,17 @@ function App() {
             Current plan: <strong>{automationPlan.action.toUpperCase()}</strong>{" "}
             {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
             {automationPlan.reason} · effective mode <strong>{effectiveAutomationMode}</strong>
+          </p>
+          <p className="signal-note">
+            Paper learning: <strong>{paperLearningMemory.closedTrades}</strong> closed result
+            {paperLearningMemory.closedTrades === 1 ? "" : "s"} · {paperLearningMemory.summary}
+            {paperLearningMemory.weakest?.scoreAdjustment < 0 && (
+              <>
+                {" "}
+                Weak spot: <strong>{paperLearningMemory.weakest.id}</strong>{" "}
+                {paperLearningMemory.weakest.scoreAdjustment}.
+              </>
+            )}
           </p>
           <p className="signal-note">
             Cash management: <strong>$3,000 adaptive sizing</strong> · max single trade{" "}
