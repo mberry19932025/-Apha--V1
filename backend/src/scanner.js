@@ -78,7 +78,7 @@ export function scanMarket(options = {}) {
         suggestedQuantity: Math.max(
           1,
           Math.floor(
-            (100000 * riskPercent * Math.max(0.35, intelligence.volatilityScore / 100)) /
+            (1000 * riskPercent * Math.max(0.35, intelligence.volatilityScore / 100)) /
               (quote?.price || candles[lastIndex].close)
           )
         )

@@ -477,11 +477,53 @@ export function buildOptionsIdeas(scannerResults = [], market = getMarketSnapsho
   });
 }
 
+export function getSymbolCategory(symbol) {
+  if (assetCatalog.etfs.includes(symbol)) {
+    return "etfs";
+  }
+  if (assetCatalog.stocks.includes(symbol)) {
+    return "stocks";
+  }
+  return "other";
+}
+
+export function rankAutomationCategories(scannerResults = [], watchlist = symbols) {
+  const allowedSymbols = new Set(watchlist.length ? watchlist : symbols);
+  const groups = scannerResults
+    .filter((result) => allowedSymbols.has(result.symbol))
+    .reduce((map, result) => {
+      const category = getSymbolCategory(result.symbol);
+      const current = map.get(category) || {
+        category,
+        symbols: [],
+        scoreTotal: 0,
+        buySignals: 0,
+        riskFlags: 0
+      };
+      current.symbols.push(result.symbol);
+      current.scoreTotal += Number(result.score || 0);
+      current.buySignals += result.action === "buy" ? 1 : 0;
+      current.riskFlags += result.intelligence?.riskFlags?.length || 0;
+      map.set(category, current);
+      return map;
+    }, new Map());
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      averageScore: round(group.scoreTotal / group.symbols.length, 1),
+      rankScore: round(group.scoreTotal / group.symbols.length + group.buySignals * 8 - group.riskFlags * 4, 1)
+    }))
+    .sort((a, b) => b.rankScore - a.rankScore);
+}
+
 export function evaluateAutomationPlan({
   scanner,
   portfolio,
   mode = "moderate",
-  watchlist = symbols
+  watchlist = symbols,
+  dayTradeEnabled = true,
+  optionsEnabled = true
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
   const maxExposurePercent = mode === "bullish" ? 65 : 40;
@@ -489,9 +531,40 @@ export function evaluateAutomationPlan({
   const allowedSymbols = new Set(watchlist.length ? watchlist : symbols);
   const positions = new Map((portfolio?.positions || []).map((position) => [position.symbol, position]));
   const candidates = (scanner?.results || []).filter((result) => allowedSymbols.has(result.symbol));
+  const categoryRanks = rankAutomationCategories(scanner?.results || [], watchlist);
+  const bestCategory = categoryRanks[0] || null;
+  const optionsIdeas = buildOptionsIdeas(scanner?.results || []);
+  const bestOptionIdea = optionsIdeas
+    .filter((idea) => allowedSymbols.has(idea.underlying))
+    .sort((a, b) => b.score - a.score)[0] || null;
+  const dayTradeExit = dayTradeEnabled
+    ? (portfolio?.positions || []).find((position) => {
+        const pnlPercent = Number(position.unrealizedPnlPercent || 0);
+        return (
+          allowedSymbols.has(position.symbol) &&
+          (pnlPercent >= (mode === "bullish" ? 0.6 : 0.35) || pnlPercent <= -0.55)
+        );
+      })
+    : null;
   const existingSell = candidates.find(
     (result) => result.action === "sell" && positions.has(result.symbol)
   );
+
+  if (dayTradeExit) {
+    return {
+      action: "sell",
+      symbol: dayTradeExit.symbol,
+      quantity: dayTradeExit.quantity,
+      reason:
+        dayTradeExit.unrealizedPnlPercent >= 0
+          ? `Day-trade rule: lock ${round(dayTradeExit.unrealizedPnlPercent, 2)}% paper gain.`
+          : `Day-trade rule: cut ${round(dayTradeExit.unrealizedPnlPercent, 2)}% paper loss.`,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
+    };
+  }
 
   if (existingSell) {
     const position = positions.get(existingSell.symbol);
@@ -500,7 +573,10 @@ export function evaluateAutomationPlan({
       symbol: existingSell.symbol,
       quantity: position.quantity,
       reason: `Automation exit: ${existingSell.reason}`,
-      profile
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
     };
   }
 
@@ -520,7 +596,10 @@ export function evaluateAutomationPlan({
     return {
       action: "hold",
       reason: "No watched setup passes automation score, liquidity, volatility, and position rules.",
-      profile
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
     };
   }
 
@@ -528,7 +607,10 @@ export function evaluateAutomationPlan({
     return {
       action: "hold",
       reason: `Exposure limit reached for ${profile.name} mode.`,
-      profile
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
     };
   }
 
@@ -537,7 +619,10 @@ export function evaluateAutomationPlan({
     symbol: buyCandidate.symbol,
     quantity: Math.max(1, Math.min(10, buyCandidate.suggestedQuantity)),
     reason: `Automation entry: ${buyCandidate.reason}`,
-    profile
+    profile,
+    bestCategory,
+    categoryRanks,
+    bestOptionIdea: optionsEnabled ? bestOptionIdea : null
   };
 }
 
@@ -545,7 +630,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const symbol = symbols.includes(String(options.symbol || "").toUpperCase())
     ? String(options.symbol).toUpperCase()
     : "SPY";
-  const startingCash = clampNumber(options.startingCash, 100000, 1000, 10000000);
+  const startingCash = clampNumber(options.startingCash, 1000, 1000, 10000000);
   const shortWindow = Math.floor(clampNumber(options.shortWindow, 20, 3, 100));
   const longWindow = Math.floor(clampNumber(options.longWindow, 50, shortWindow + 1, 220));
   const lookbackDays = Math.floor(clampNumber(options.lookbackDays, 260, longWindow + 30, 900));
@@ -562,7 +647,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const maxConsecutiveWins = Math.floor(clampNumber(options.maxConsecutiveWins, 4, 1, 20));
   const riskProfileId = riskProfiles.some((profile) => profile.id === options.riskProfile)
     ? options.riskProfile
-    : "moderate-bullish";
+    : "moderate";
   const strategyId = strategies.some((strategy) => strategy.id === options.strategy)
     ? options.strategy
     : "ma-crossover";
@@ -930,7 +1015,7 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
         suggestedQuantity: Math.max(
           1,
           Math.floor(
-            (100000 * riskPercent * Math.max(0.35, intelligence.volatilityScore / 100)) /
+            (1000 * riskPercent * Math.max(0.35, intelligence.volatilityScore / 100)) /
               (quote?.price || candles[lastIndex].close)
           )
         )
@@ -1186,8 +1271,8 @@ export function evaluateReadiness({
 
 export function createInitialPortfolio() {
   return {
-    cash: 100000,
-    startingCash: 100000,
+    cash: 1000,
+    startingCash: 1000,
     realizedPnl: 0,
     trades: [],
     positions: {}
@@ -1206,7 +1291,11 @@ export function buildPortfolio(state, market) {
       averagePrice: round(position.averagePrice),
       marketPrice: quote?.price ?? null,
       marketValue: round(marketValue),
-      unrealizedPnl: round(unrealizedPnl)
+      unrealizedPnl: round(unrealizedPnl),
+      unrealizedPnlPercent: position.averagePrice
+        ? round((unrealizedPnl / (position.averagePrice * position.quantity)) * 100, 2)
+        : 0,
+      openedAt: position.openedAt || null
     };
   });
 
@@ -1262,6 +1351,7 @@ export function placePaperTrade(state, market, order) {
     const totalCost = position.averagePrice * position.quantity + gross;
     position.quantity += quantity;
     position.averagePrice = totalCost / position.quantity;
+    position.openedAt ||= new Date().toISOString();
     next.cash -= gross;
     next.positions[symbol] = position;
   } else {
