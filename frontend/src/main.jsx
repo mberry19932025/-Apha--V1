@@ -607,7 +607,11 @@ function App() {
       if (plan.action === "hold" || plan.action === "market-closed") {
         recordAutomation({ action: "hold", symbol: "-", quantity: 0, reason: plan.reason });
         setMessage(`Automation HOLD: ${plan.reason}`);
-        if (plan.action === "market-closed" || (plan.profitLock?.secureDayProfit && !plan.profitLock?.runnerLeft)) {
+        if (
+          plan.action === "market-closed" ||
+          plan.profitLock?.hardDailyLossStop ||
+          (plan.profitLock?.secureDayProfit && !plan.profitLock?.runnerLeft)
+        ) {
           setAutomationEnabled(false);
           saveAutomationSnapshot(plan.reason);
         }
@@ -658,7 +662,7 @@ function App() {
         });
         setMessage(`Automation SELL OPTION: ${plan.symbol} · ${plan.reason}`);
         saveAutomationSnapshot(plan.reason);
-        if (plan.profitLock?.secureDayProfit && !plan.profitLock?.runnerLeft) {
+        if (plan.profitLock?.hardDailyLossStop || (plan.profitLock?.secureDayProfit && !plan.profitLock?.runnerLeft)) {
           setAutomationEnabled(false);
         }
         return;
@@ -683,7 +687,7 @@ function App() {
         });
         setMessage(`Automation ${plan.action.toUpperCase()}: ${plan.symbol} · ${plan.reason}`);
         saveAutomationSnapshot(plan.reason);
-        if (plan.profitLock?.secureDayProfit && !plan.profitLock?.runnerLeft) {
+        if (plan.profitLock?.hardDailyLossStop || (plan.profitLock?.secureDayProfit && !plan.profitLock?.runnerLeft)) {
           setAutomationEnabled(false);
         }
         return;
@@ -695,7 +699,7 @@ function App() {
       if (plan.action === "sell" || portfolio.totalReturn >= 0) {
         saveAutomationSnapshot(plan.reason);
       }
-      if (plan.profitLock?.secureDayProfit && !plan.profitLock?.runnerLeft) {
+      if (plan.profitLock?.hardDailyLossStop || (plan.profitLock?.secureDayProfit && !plan.profitLock?.runnerLeft)) {
         setAutomationEnabled(false);
       }
     } catch (error) {
@@ -1024,7 +1028,10 @@ function App() {
             </strong>
             . If profit gives back too much, automation closes risk before new entries.
             <br />
-            Hard target: once session profit reaches <strong>$100</strong>, automation secures the day and stops.
+            Secure target: once session profit reaches{" "}
+            <strong>{formatMoney(automationPlan.profitLock?.realisticProfitTarget || 100)}</strong>, automation secures the day and stops.
+            Daily kill switch: down{" "}
+            <strong>{formatMoney(automationPlan.profitLock?.hardLossDollars || 75)}</strong> or 2.5%, close risk and stop.
             Substantial option winners can keep one runner only; no new trades are allowed while runner mode is active.
           </p>
           <p className="signal-note">

@@ -889,9 +889,14 @@ export function evaluateAutomationPlan({
   const sessionProfit = Number(sessionPeakEquity || portfolio?.equity || 0) - Number(portfolio?.startingCash || 0);
   const currentProfit = Number(portfolio?.equity || 0) - Number(portfolio?.startingCash || 0);
   const givebackDollars = Math.max(0, sessionProfit - currentProfit);
-  const secureDayProfit = sessionProfit >= 100;
-  const gaveBackTooMuch = sessionProfit >= 25 && givebackDollars >= Math.max(12, sessionProfit * 0.35);
-  const greenToRed = sessionProfit >= 15 && currentProfit <= 0;
+  const startingCash = Number(portfolio?.startingCash || 3000);
+  const dailyLossPercent = startingCash ? Math.abs(Math.min(0, currentProfit) / startingCash) * 100 : 0;
+  const hardLossDollars = Math.max(25, startingCash * 0.025);
+  const hardDailyLossStop = currentProfit <= -hardLossDollars || dailyLossPercent >= 2.5;
+  const realisticProfitTarget = Math.min(100, Math.max(35, startingCash * 0.04));
+  const secureDayProfit = sessionProfit >= realisticProfitTarget;
+  const gaveBackTooMuch = sessionProfit >= 15 && givebackDollars >= Math.max(8, sessionProfit * 0.3);
+  const greenToRed = sessionProfit >= 10 && currentProfit <= 0;
   const openStockRisk = (portfolio?.positions || []).sort(
     (a, b) => Math.abs(Number(b.marketValue || 0)) - Math.abs(Number(a.marketValue || 0))
   )[0];
@@ -983,24 +988,34 @@ export function evaluateAutomationPlan({
     };
   }
 
-  if ((secureDayProfit || gaveBackTooMuch || greenToRed) && largestRisk) {
+  if ((hardDailyLossStop || secureDayProfit || gaveBackTooMuch || greenToRed) && largestRisk) {
     if (largestRisk.assetType === "future") {
       return {
         action: largestRisk.quantity > 0 ? "sell-future" : "buy-future",
         symbol: largestRisk.symbol,
         quantity: Math.abs(largestRisk.quantity),
-        reason: secureDayProfit
-          ? `Profit secure: session profit reached ${round(sessionProfit)}. Closing futures risk and stopping new trades.`
-          : greenToRed
-            ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing futures risk.`
-            : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing futures risk.`,
+        reason: hardDailyLossStop
+          ? `Daily kill switch: account is down ${round(Math.abs(currentProfit))} (${round(dailyLossPercent, 2)}%). Closing futures risk and stopping new trades.`
+          : secureDayProfit
+            ? `Profit secure: session profit reached ${round(sessionProfit)}. Closing futures risk and stopping new trades.`
+            : greenToRed
+              ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing futures risk.`
+              : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing futures risk.`,
         profile,
         bestCategory,
         categoryRanks,
         bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
         futuresPolicy,
         adaptiveRisk,
-        profitLock: { secureDayProfit, sessionProfit: round(sessionProfit), currentProfit: round(currentProfit), givebackDollars: round(givebackDollars) }
+        profitLock: {
+          hardDailyLossStop,
+          secureDayProfit,
+          realisticProfitTarget: round(realisticProfitTarget),
+          hardLossDollars: round(hardLossDollars),
+          sessionProfit: round(sessionProfit),
+          currentProfit: round(currentProfit),
+          givebackDollars: round(givebackDollars)
+        }
       };
     }
 
@@ -1008,7 +1023,7 @@ export function evaluateAutomationPlan({
       const substantialOptionWin =
         Number(largestRisk.unrealizedPnl || 0) >= 150 ||
         Number(largestRisk.unrealizedPnlPercent || 0) >= 100;
-      if (secureDayProfit && substantialOptionWin && largestRisk.quantity === 1 && !gaveBackTooMuch && !greenToRed) {
+      if (secureDayProfit && substantialOptionWin && largestRisk.quantity === 1 && !hardDailyLossStop && !gaveBackTooMuch && !greenToRed) {
         return {
           action: "hold",
           reason: `Profit secure: session profit reached ${round(sessionProfit)}. Keeping one substantial winning option as a defined runner; no new trades today unless it gives back profit.`,
@@ -1020,8 +1035,11 @@ export function evaluateAutomationPlan({
           adaptiveRisk,
           profitLock: {
             secureDayProfit,
+            hardDailyLossStop,
             substantialOptionWin,
             runnerLeft: true,
+            realisticProfitTarget: round(realisticProfitTarget),
+            hardLossDollars: round(hardLossDollars),
             sessionProfit: round(sessionProfit),
             currentProfit: round(currentProfit),
             givebackDollars: round(givebackDollars)
@@ -1037,13 +1055,15 @@ export function evaluateAutomationPlan({
         symbol: largestRisk.underlying,
         quantity: runnerQuantity,
         optionPosition: largestRisk,
-        reason: secureDayProfit
-          ? substantialOptionWin && largestRisk.quantity > 1
-            ? `Profit secure: session profit reached ${round(sessionProfit)}. Selling ${runnerQuantity} option contract(s) to secure profit and leaving one defined runner. No new trades today.`
-            : `Profit secure: session profit reached ${round(sessionProfit)}. Closing option risk and stopping new trades.`
-          : greenToRed
-            ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing option risk.`
-            : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing option risk.`,
+        reason: hardDailyLossStop
+          ? `Daily kill switch: account is down ${round(Math.abs(currentProfit))} (${round(dailyLossPercent, 2)}%). Closing option risk and stopping new trades.`
+          : secureDayProfit
+            ? substantialOptionWin && largestRisk.quantity > 1
+              ? `Profit secure: session profit reached ${round(sessionProfit)}. Selling ${runnerQuantity} option contract(s) to secure profit and leaving one defined runner. No new trades today.`
+              : `Profit secure: session profit reached ${round(sessionProfit)}. Closing option risk and stopping new trades.`
+            : greenToRed
+              ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing option risk.`
+              : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing option risk.`,
         profile,
         bestCategory,
         categoryRanks,
@@ -1052,8 +1072,11 @@ export function evaluateAutomationPlan({
         adaptiveRisk,
         profitLock: {
           secureDayProfit,
+          hardDailyLossStop,
           substantialOptionWin,
           runnerLeft: secureDayProfit && substantialOptionWin && largestRisk.quantity > runnerQuantity,
+          realisticProfitTarget: round(realisticProfitTarget),
+          hardLossDollars: round(hardLossDollars),
           sessionProfit: round(sessionProfit),
           currentProfit: round(currentProfit),
           givebackDollars: round(givebackDollars)
@@ -1065,34 +1088,54 @@ export function evaluateAutomationPlan({
       action: "sell",
       symbol: largestRisk.symbol,
       quantity: largestRisk.quantity,
-      reason: secureDayProfit
-        ? `Profit secure: session profit reached ${round(sessionProfit)}. Closing stock/ETF risk and stopping new trades.`
-        : greenToRed
-          ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing stock/ETF risk.`
-          : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing stock/ETF risk.`,
+      reason: hardDailyLossStop
+        ? `Daily kill switch: account is down ${round(Math.abs(currentProfit))} (${round(dailyLossPercent, 2)}%). Closing stock/ETF risk and stopping new trades.`
+        : secureDayProfit
+          ? `Profit secure: session profit reached ${round(sessionProfit)}. Closing stock/ETF risk and stopping new trades.`
+          : greenToRed
+            ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing stock/ETF risk.`
+            : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing stock/ETF risk.`,
       profile,
       bestCategory,
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
       adaptiveRisk,
-      profitLock: { secureDayProfit, sessionProfit: round(sessionProfit), currentProfit: round(currentProfit), givebackDollars: round(givebackDollars) }
+      profitLock: {
+        hardDailyLossStop,
+        secureDayProfit,
+        realisticProfitTarget: round(realisticProfitTarget),
+        hardLossDollars: round(hardLossDollars),
+        sessionProfit: round(sessionProfit),
+        currentProfit: round(currentProfit),
+        givebackDollars: round(givebackDollars)
+      }
     };
   }
 
-  if (secureDayProfit || greenToRed) {
+  if (hardDailyLossStop || secureDayProfit || greenToRed) {
     return {
       action: "hold",
-      reason: secureDayProfit
-        ? `Profit secure: session profit reached ${round(sessionProfit)}. No more new trades today.`
-        : `Profit lock: account was up ${round(sessionProfit)} and is no longer green. Stop new trades for the day.`,
+      reason: hardDailyLossStop
+        ? `Daily kill switch: account is down ${round(Math.abs(currentProfit))} (${round(dailyLossPercent, 2)}%). No more new trades today.`
+        : secureDayProfit
+          ? `Profit secure: session profit reached ${round(sessionProfit)}. No more new trades today.`
+          : `Profit lock: account was up ${round(sessionProfit)} and is no longer green. Stop new trades for the day.`,
       profile,
       bestCategory,
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
       adaptiveRisk,
-      profitLock: { secureDayProfit, sessionProfit: round(sessionProfit), currentProfit: round(currentProfit), givebackDollars: round(givebackDollars) }
+      profitLock: {
+        hardDailyLossStop,
+        secureDayProfit,
+        realisticProfitTarget: round(realisticProfitTarget),
+        hardLossDollars: round(hardLossDollars),
+        sessionProfit: round(sessionProfit),
+        currentProfit: round(currentProfit),
+        givebackDollars: round(givebackDollars)
+      }
     };
   }
 
