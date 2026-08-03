@@ -251,9 +251,11 @@ function App() {
         watchlist,
         dayTradeEnabled,
         optionsEnabled,
-        strategyMap
+        strategyMap,
+        automationLog,
+        futuresEnabled: true
       }),
-    [scanner, portfolio, automationMode, watchlist, dayTradeEnabled, optionsEnabled, strategyMap]
+    [scanner, portfolio, automationMode, watchlist, dayTradeEnabled, optionsEnabled, strategyMap, automationLog]
   );
 
   useEffect(() => {
@@ -493,7 +495,9 @@ function App() {
         watchlist,
         dayTradeEnabled,
         optionsEnabled,
-        strategyMap
+        strategyMap,
+        automationLog,
+        futuresEnabled: true
       });
 
       if (plan.action === "hold") {
@@ -518,6 +522,28 @@ function App() {
           reason: plan.reason
         });
         setMessage(`Automation BUY OPTION: ${plan.optionIdea.underlying} ${plan.optionIdea.contractType.toUpperCase()} · ${plan.reason}`);
+        saveAutomationSnapshot(plan.reason);
+        return;
+      }
+
+      if (["buy-future", "sell-future"].includes(plan.action)) {
+        const selectedStrategy = strategyMap[plan.symbol];
+        const side = plan.action === "buy-future" ? "buy" : "sell";
+        const nextPortfolioState = placePaperFuturesTrade(portfolioState, market, {
+          symbol: plan.symbol,
+          side,
+          quantity: plan.quantity,
+          strategy: selectedStrategy?.strategy?.name || "Best available",
+          strategyScore: selectedStrategy?.score || null
+        });
+        setPortfolioState(nextPortfolioState);
+        recordAutomation({
+          action: plan.action,
+          symbol: plan.symbol,
+          quantity: plan.quantity,
+          reason: plan.reason
+        });
+        setMessage(`Automation ${plan.action.toUpperCase()}: ${plan.symbol} · ${plan.reason}`);
         saveAutomationSnapshot(plan.reason);
         return;
       }
@@ -799,6 +825,12 @@ function App() {
             {formatPercent((automationPlan.adaptiveRisk?.maxSingleTradeCashPercent || 0) * 100)} cash · max exposure{" "}
             {formatPercent(automationPlan.adaptiveRisk?.maxExposurePercent)} · live $1k equivalent risk{" "}
             {formatMoney(automationPlan.adaptiveRisk?.live1000Equivalent?.maxSingleTradeDollars)} per trade.
+          </p>
+          <p className="signal-note">
+            Futures policy: <strong>4-hour evaluation cycle</strong> · max daily loss{" "}
+            {formatPercent(automationPlan.futuresPolicy?.maxDailyLossPercent)} · profit protect starts at{" "}
+            {formatPercent(automationPlan.futuresPolicy?.profitProtectPercent)} · next futures cycle{" "}
+            {automationPlan.futuresPolicy?.cycleDue ? "due now" : "not due"}.
           </p>
           {automationPlan.symbol && strategyMap[automationPlan.symbol] && (
             <p className="signal-note">

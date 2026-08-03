@@ -667,6 +667,49 @@ export function getAdaptiveRiskSettings(portfolio = {}, mode = "moderate") {
   };
 }
 
+export function evaluateFuturesPolicy({
+  portfolio = {},
+  automationLog = [],
+  now = new Date(),
+  cycleHours = 4,
+  maxDailyLossPercent = 8,
+  profitProtectPercent = 2
+} = {}) {
+  const startingCash = Number(portfolio.startingCash || 3000);
+  const totalReturnPercent = Number(portfolio.totalReturnPercent || 0);
+  const futuresPnl = (portfolio.futuresPositions || []).reduce(
+    (sum, position) => sum + Number(position.unrealizedPnl || 0),
+    0
+  );
+  const futuresPnlPercent = startingCash ? (futuresPnl / startingCash) * 100 : 0;
+  const lastFuturesCycle = automationLog.find((entry) =>
+    ["buy-future", "sell-future", "futures-eval", "futures-protect"].includes(entry.action)
+  );
+  const lastCycleTime = lastFuturesCycle ? new Date(lastFuturesCycle.createdAt).getTime() : 0;
+  const hoursSinceLastCycle = lastCycleTime
+    ? (now.getTime() - lastCycleTime) / (60 * 60 * 1000)
+    : Infinity;
+  const cycleDue = hoursSinceLastCycle >= cycleHours;
+  const hardStop = totalReturnPercent <= -maxDailyLossPercent;
+  const protectProfit = totalReturnPercent >= profitProtectPercent && futuresPnlPercent < -0.35;
+  const reduceRisk = totalReturnPercent <= -4;
+
+  return {
+    cycleHours,
+    maxDailyLossPercent,
+    profitProtectPercent,
+    totalReturnPercent: round(totalReturnPercent, 2),
+    futuresPnl: round(futuresPnl),
+    futuresPnlPercent: round(futuresPnlPercent, 2),
+    hoursSinceLastCycle: Number.isFinite(hoursSinceLastCycle) ? round(hoursSinceLastCycle, 2) : null,
+    cycleDue,
+    hardStop,
+    protectProfit,
+    reduceRisk,
+    canTradeFutures: cycleDue && !hardStop && !protectProfit
+  };
+}
+
 export function evaluateAutomationPlan({
   scanner,
   portfolio,
@@ -674,10 +717,13 @@ export function evaluateAutomationPlan({
   watchlist = symbols,
   dayTradeEnabled = true,
   optionsEnabled = true,
-  strategyMap = {}
+  strategyMap = {},
+  automationLog = [],
+  futuresEnabled = true
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
   const adaptiveRisk = getAdaptiveRiskSettings(portfolio, mode);
+  const futuresPolicy = evaluateFuturesPolicy({ portfolio, automationLog });
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
   const minBuyScore = mode === "bullish" ? 64 : 70;
@@ -703,6 +749,34 @@ export function evaluateAutomationPlan({
   const existingSell = candidates.find(
     (result) => result.action === "sell" && positions.has(result.symbol)
   );
+  const futuresExit = (portfolio?.futuresPositions || []).find(
+    (position) =>
+      futuresPolicy.hardStop ||
+      futuresPolicy.protectProfit ||
+      Number(position.unrealizedPnlPercent || 0) >= 1.25 ||
+      Number(position.unrealizedPnlPercent || 0) <= -1.2
+  );
+
+  if (futuresExit) {
+    return {
+      action: futuresExit.quantity > 0 ? "sell-future" : "buy-future",
+      symbol: futuresExit.symbol,
+      quantity: Math.abs(futuresExit.quantity),
+      reason: futuresPolicy.hardStop
+        ? `Futures hard stop: daily loss reached ${round(Math.abs(futuresPolicy.totalReturnPercent), 2)}%, max ${futuresPolicy.maxDailyLossPercent}%.`
+        : futuresPolicy.protectProfit
+          ? "Futures profit protection: account is green but futures position is giving back gains."
+          : futuresExit.unrealizedPnlPercent >= 0
+            ? `Futures 4h guard: secure ${round(futuresExit.unrealizedPnlPercent, 2)}% open gain.`
+            : `Futures 4h guard: cut ${round(futuresExit.unrealizedPnlPercent, 2)}% open loss.`,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      adaptiveRisk,
+      futuresPolicy
+    };
+  }
 
   if (dayTradeExit) {
     return {
@@ -717,6 +791,7 @@ export function evaluateAutomationPlan({
       bestCategory,
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
       adaptiveRisk
     };
   }
@@ -732,6 +807,7 @@ export function evaluateAutomationPlan({
       bestCategory,
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
       adaptiveRisk
     };
   }
@@ -752,6 +828,34 @@ export function evaluateAutomationPlan({
   });
 
   if (!buyCandidate) {
+    const futuresCandidate = futuresEnabled && futuresPolicy.canTradeFutures
+      ? (scanner?.results || []).find((result) => {
+          const selectedStrategy = strategyMap[result.symbol];
+          return (
+            assetCatalog.futures.includes(result.symbol) &&
+            result.action === "buy" &&
+            result.score >= (mode === "bullish" ? 66 : 72) &&
+            (selectedStrategy?.score || 0) >= (mode === "bullish" ? 58 : 64) &&
+            result.intelligence?.volatilityRegime !== "extreme"
+          );
+        })
+      : null;
+
+    if (futuresCandidate) {
+      return {
+        action: "buy-future",
+        symbol: futuresCandidate.symbol,
+        quantity: 1,
+        reason: `Futures 4h cycle entry: ${futuresCandidate.symbol} passed scanner, strategy, and volatility gates. Re-evaluate in ${futuresPolicy.cycleHours} hours.`,
+        profile,
+        bestCategory,
+        categoryRanks,
+        bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+        futuresPolicy,
+        adaptiveRisk
+      };
+    }
+
     return {
       action: "hold",
       reason: "No watched setup passes automation score, liquidity, volatility, and position rules.",
@@ -769,6 +873,7 @@ export function evaluateAutomationPlan({
       bestCategory,
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
       adaptiveRisk
     };
   }
@@ -781,6 +886,7 @@ export function evaluateAutomationPlan({
       bestCategory,
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
       adaptiveRisk
     };
   }
@@ -807,6 +913,7 @@ export function evaluateAutomationPlan({
         bestCategory,
         categoryRanks,
         bestOptionIdea,
+        futuresPolicy,
         adaptiveRisk
       };
     }
@@ -832,6 +939,7 @@ export function evaluateAutomationPlan({
       bestCategory,
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
       adaptiveRisk
     };
   }
@@ -847,6 +955,7 @@ export function evaluateAutomationPlan({
     bestCategory,
     categoryRanks,
     bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+    futuresPolicy,
     adaptiveRisk
   };
 }
