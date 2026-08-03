@@ -1,4 +1,21 @@
-const symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ", "IWM", "DIA", "TLT", "GLD"];
+const symbols = [
+  "AAPL",
+  "MSFT",
+  "NVDA",
+  "TSLA",
+  "SPY",
+  "QQQ",
+  "IWM",
+  "DIA",
+  "TLT",
+  "GLD",
+  "MES",
+  "MNQ",
+  "M2K",
+  "MYM",
+  "MGC",
+  "MBT"
+];
 
 const basePrices = {
   AAPL: 212.45,
@@ -10,7 +27,13 @@ const basePrices = {
   IWM: 218.44,
   DIA: 404.12,
   TLT: 92.36,
-  GLD: 229.75
+  GLD: 229.75,
+  MES: 5525,
+  MNQ: 19680,
+  M2K: 2185,
+  MYM: 40410,
+  MGC: 2315,
+  MBT: 114000
 };
 
 export function getSupportedSymbols() {

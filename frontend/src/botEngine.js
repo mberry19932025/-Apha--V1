@@ -4,12 +4,39 @@ export { tradingKnowledge };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export const symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ", "IWM", "DIA", "TLT", "GLD"];
+export const symbols = [
+  "AAPL",
+  "MSFT",
+  "NVDA",
+  "TSLA",
+  "SPY",
+  "QQQ",
+  "IWM",
+  "DIA",
+  "TLT",
+  "GLD",
+  "MES",
+  "MNQ",
+  "M2K",
+  "MYM",
+  "MGC",
+  "MBT"
+];
 
 export const assetCatalog = {
   stocks: ["AAPL", "MSFT", "NVDA", "TSLA"],
   etfs: ["SPY", "QQQ", "IWM", "DIA", "TLT", "GLD"],
-  optionsUnderlyings: ["SPY", "QQQ", "AAPL", "NVDA", "TSLA"]
+  optionsUnderlyings: ["SPY", "QQQ", "AAPL", "NVDA", "TSLA"],
+  futures: ["MES", "MNQ", "M2K", "MYM", "MGC", "MBT"]
+};
+
+export const futuresCatalog = {
+  MES: { name: "Micro E-mini S&P 500", tickValue: 1.25, pointValue: 5, marginEstimate: 120 },
+  MNQ: { name: "Micro E-mini Nasdaq-100", tickValue: 0.5, pointValue: 2, marginEstimate: 150 },
+  M2K: { name: "Micro E-mini Russell 2000", tickValue: 0.5, pointValue: 5, marginEstimate: 90 },
+  MYM: { name: "Micro E-mini Dow", tickValue: 0.5, pointValue: 0.5, marginEstimate: 80 },
+  MGC: { name: "Micro Gold", tickValue: 1, pointValue: 10, marginEstimate: 130 },
+  MBT: { name: "Micro Bitcoin", tickValue: 0.5, pointValue: 0.1, marginEstimate: 250 }
 };
 
 export const strategies = [
@@ -37,7 +64,13 @@ const basePrices = {
   IWM: 218.44,
   DIA: 404.12,
   TLT: 92.36,
-  GLD: 229.75
+  GLD: 229.75,
+  MES: 5525,
+  MNQ: 19680,
+  M2K: 2185,
+  MYM: 40410,
+  MGC: 2315,
+  MBT: 114000
 };
 
 const profiles = {
@@ -50,7 +83,13 @@ const profiles = {
   IWM: { start: 202, trend: 0.00028, cycle: 0.022, noise: 0.012 },
   DIA: { start: 384, trend: 0.00022, cycle: 0.013, noise: 0.007 },
   TLT: { start: 96, trend: -0.00005, cycle: 0.018, noise: 0.009 },
-  GLD: { start: 205, trend: 0.00031, cycle: 0.017, noise: 0.008 }
+  GLD: { start: 205, trend: 0.00031, cycle: 0.017, noise: 0.008 },
+  MES: { start: 5200, trend: 0.00034, cycle: 0.014, noise: 0.007 },
+  MNQ: { start: 18500, trend: 0.00048, cycle: 0.022, noise: 0.012 },
+  M2K: { start: 2050, trend: 0.00028, cycle: 0.024, noise: 0.014 },
+  MYM: { start: 38500, trend: 0.00022, cycle: 0.013, noise: 0.007 },
+  MGC: { start: 2080, trend: 0.00031, cycle: 0.017, noise: 0.008 },
+  MBT: { start: 104000, trend: 0.00065, cycle: 0.06, noise: 0.035 }
 };
 
 function round(value, decimals = 2) {
@@ -501,6 +540,9 @@ export function estimateOptionPremium({
 }
 
 export function getSymbolCategory(symbol) {
+  if (assetCatalog.futures.includes(symbol)) {
+    return "futures";
+  }
   if (assetCatalog.etfs.includes(symbol)) {
     return "etfs";
   }
@@ -1354,7 +1396,8 @@ export function createInitialPortfolio() {
     realizedPnl: 0,
     trades: [],
     positions: {},
-    optionPositions: {}
+    optionPositions: {},
+    futuresPositions: {}
   };
 }
 
@@ -1363,6 +1406,7 @@ export function buildPortfolio(state, market) {
     ...state,
     positions: state.positions || {},
     optionPositions: state.optionPositions || {},
+    futuresPositions: state.futuresPositions || {},
     trades: state.trades || []
   };
   const positions = Object.entries(safeState.positions).map(([symbol, position]) => {
@@ -1406,10 +1450,32 @@ export function buildPortfolio(state, market) {
       unrealizedPnlPercent: costBasis ? round((unrealizedPnl / costBasis) * 100, 2) : 0
     };
   });
+  const futuresPositions = Object.entries(safeState.futuresPositions).map(([symbol, position]) => {
+    const quote = market.find((item) => item.symbol === symbol);
+    const contract = futuresCatalog[symbol];
+    const markPrice = quote?.price || position.averagePrice;
+    const multiplier = contract?.pointValue || 1;
+    const marketValue = contract?.marginEstimate * Math.abs(position.quantity);
+    const unrealizedPnl = (markPrice - position.averagePrice) * multiplier * position.quantity;
+
+    return {
+      symbol,
+      ...position,
+      name: contract?.name || symbol,
+      markPrice: round(markPrice),
+      marketValue: round(marketValue),
+      unrealizedPnl: round(unrealizedPnl),
+      unrealizedPnlPercent: position.averagePrice
+        ? round((unrealizedPnl / (contract?.marginEstimate * Math.abs(position.quantity) || 1)) * 100, 2)
+        : 0
+    };
+  });
 
   const exposure = positions.reduce((sum, position) => sum + position.marketValue, 0);
   const optionsExposure = optionPositions.reduce((sum, position) => sum + position.marketValue, 0);
-  const equity = safeState.cash + exposure + optionsExposure;
+  const futuresExposure = futuresPositions.reduce((sum, position) => sum + position.marketValue, 0);
+  const futuresPnl = futuresPositions.reduce((sum, position) => sum + position.unrealizedPnl, 0);
+  const equity = safeState.cash + exposure + optionsExposure + futuresPnl;
 
   return {
     mode: "static paper",
@@ -1421,10 +1487,13 @@ export function buildPortfolio(state, market) {
     totalReturnPercent: round(((equity - safeState.startingCash) / safeState.startingCash) * 100),
     exposure: round(exposure),
     optionsExposure: round(optionsExposure),
+    futuresExposure: round(futuresExposure),
     exposurePercent: equity ? round((exposure / equity) * 100) : 0,
     optionsExposurePercent: equity ? round((optionsExposure / equity) * 100) : 0,
+    futuresExposurePercent: equity ? round((futuresExposure / equity) * 100) : 0,
     positions,
     optionPositions,
+    futuresPositions,
     trades: safeState.trades.slice(-30).reverse()
   };
 }
@@ -1588,6 +1657,98 @@ export function placePaperOptionTrade(state, optionIdea, order = {}) {
     strategy: order.strategy || "Manual",
     strategyScore: order.strategyScore || null,
     description: `${optionIdea.underlying} ${optionIdea.strike} ${optionIdea.contractType.toUpperCase()} ${optionIdea.expiry}`,
+    createdAt: new Date().toISOString()
+  });
+
+  return next;
+}
+
+export function placePaperFuturesTrade(state, market, order = {}) {
+  const symbol = String(order.symbol || "").trim().toUpperCase();
+  const side = String(order.side || "buy").trim().toLowerCase();
+  const quantity = Number(order.quantity || 1);
+  const quote = market.find((item) => item.symbol === symbol);
+  const contract = futuresCatalog[symbol];
+
+  if (!contract || !quote) {
+    throw new Error(`Unsupported paper futures contract: ${symbol}.`);
+  }
+
+  if (!["buy", "sell"].includes(side)) {
+    throw new Error("Futures side must be buy or sell.");
+  }
+
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("Futures quantity must be greater than zero.");
+  }
+
+  const next =
+    typeof structuredClone === "function"
+      ? structuredClone(state)
+      : JSON.parse(JSON.stringify(state));
+  next.futuresPositions ||= {};
+  next.trades ||= [];
+
+  const signedQuantity = side === "buy" ? quantity : -quantity;
+  const marginRequired = contract.marginEstimate * Math.abs(quantity);
+  const maxFuturesMargin = Math.max(100, next.startingCash * 0.35);
+
+  if (marginRequired > maxFuturesMargin) {
+    throw new Error("Futures paper order blocked by 35% margin risk cap.");
+  }
+
+  if (marginRequired > next.cash) {
+    throw new Error("Insufficient paper cash for futures margin.");
+  }
+
+  const position = next.futuresPositions[symbol] || {
+    quantity: 0,
+    averagePrice: 0,
+    openedAt: new Date().toISOString()
+  };
+  const closingOpposite =
+    position.quantity !== 0 && Math.sign(position.quantity) !== Math.sign(signedQuantity);
+  let realizedPnl = 0;
+
+  if (closingOpposite) {
+    const closingQuantity = Math.min(Math.abs(position.quantity), Math.abs(signedQuantity));
+    realizedPnl =
+      (quote.price - position.averagePrice) *
+      contract.pointValue *
+      closingQuantity *
+      Math.sign(position.quantity);
+    position.quantity += signedQuantity;
+    next.realizedPnl = (next.realizedPnl || 0) + realizedPnl;
+  } else {
+    const totalContracts = Math.abs(position.quantity) + Math.abs(signedQuantity);
+    position.averagePrice =
+      totalContracts > 0
+        ? (position.averagePrice * Math.abs(position.quantity) + quote.price * Math.abs(signedQuantity)) /
+          totalContracts
+        : quote.price;
+    position.quantity += signedQuantity;
+  }
+
+  if (position.quantity === 0) {
+    delete next.futuresPositions[symbol];
+  } else {
+    next.futuresPositions[symbol] = position;
+  }
+
+  next.trades.push({
+    id:
+      globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    assetType: "future",
+    symbol,
+    side,
+    quantity,
+    price: round(quote.price),
+    gross: round(marginRequired),
+    realizedPnl: round(realizedPnl),
+    strategy: order.strategy || "Manual",
+    strategyScore: order.strategyScore || null,
+    description: `${symbol} ${contract.name}`,
     createdAt: new Date().toISOString()
   });
 

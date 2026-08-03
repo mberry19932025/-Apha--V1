@@ -14,6 +14,7 @@ import {
   getMarketSnapshot,
   getSignals,
   loadBundledData,
+  placePaperFuturesTrade,
   placePaperOptionTrade,
   placePaperTrade,
   parseCandlesCsv,
@@ -387,6 +388,30 @@ function App() {
         `${side.toUpperCase()} option filled: ${latestTrade.description} x ${latestTrade.quantity} at ${formatMoney(
           latestTrade.price
         )} premium. Strategy: ${latestTrade.strategy}.`
+      );
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function tradeFuture(symbol, side) {
+    setMessage("");
+
+    try {
+      const selectedStrategy = strategyMap[symbol];
+      const nextPortfolioState = placePaperFuturesTrade(portfolioState, market, {
+        symbol,
+        side,
+        quantity: 1,
+        strategy: selectedStrategy?.strategy?.name || "Best available",
+        strategyScore: selectedStrategy?.score || null
+      });
+      setPortfolioState(nextPortfolioState);
+      const latestTrade = nextPortfolioState.trades.at(-1);
+      setMessage(
+        `${side.toUpperCase()} future filled: ${latestTrade.description} x ${latestTrade.quantity} at ${formatMoney(
+          latestTrade.price
+        )}. Strategy: ${latestTrade.strategy}.`
       );
     } catch (error) {
       setMessage(error.message);
@@ -908,7 +933,7 @@ function App() {
         <article className="card">
           <div className="card-header">
             <h2>Asset Coverage</h2>
-            <span className="pill hold">stocks + ETFs + options</span>
+            <span className="pill hold">stocks + ETFs + options + futures</span>
           </div>
           <div className="brief-list">
             <div className="brief-item">
@@ -930,6 +955,13 @@ function App() {
               <span>
                 <strong>Options</strong>
                 <small>Simulated watch ideas only. No real options execution.</small>
+              </span>
+            </div>
+            <div className="brief-item">
+              <span className="checkmark">✓</span>
+              <span>
+                <strong>Micro Futures</strong>
+                <small>{assetCatalog.futures.join(", ")} · simulated margin-capped paper trades only.</small>
               </span>
             </div>
           </div>
@@ -976,6 +1008,63 @@ function App() {
             ))}
           </div>
         </article>
+      </section>
+
+      <section className="card data-card">
+        <div className="card-header">
+          <h2>Futures Watch</h2>
+          <span className="pill hold">micro paper futures</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Contract</th>
+              <th>Price</th>
+              <th>Scanner</th>
+              <th>Best Strategy</th>
+              <th>Risk</th>
+              <th>Paper Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {assetCatalog.futures.map((symbol) => {
+              const quote = market.find((item) => item.symbol === symbol);
+              const setup = scanner?.results?.find((result) => result.symbol === symbol);
+              const selectedStrategy = strategyMap[symbol];
+              return (
+                <tr key={symbol}>
+                  <td>{symbol}</td>
+                  <td>{formatMoney(quote?.price)}</td>
+                  <td>
+                    {setup ? (
+                      <span className={`pill ${setup.action}`}>{setup.action} {setup.score}</span>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+                  <td>
+                    {selectedStrategy
+                      ? `${selectedStrategy.strategy.name} · ${selectedStrategy.score}/100`
+                      : "calculating"}
+                  </td>
+                  <td>
+                    <small>35% margin cap · one micro contract default</small>
+                  </td>
+                  <td>
+                    <span className="quick-actions inline-actions">
+                      <button type="button" className="secondary mini" onClick={() => tradeFuture(symbol, "buy")}>
+                        Paper Long
+                      </button>
+                      <button type="button" className="secondary mini" onClick={() => tradeFuture(symbol, "sell")}>
+                        Paper Short
+                      </button>
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </section>
 
       <section className="brief-grid">
@@ -1952,6 +2041,42 @@ function App() {
         </article>
 
         <article className="card">
+          <h2>Paper Futures Positions</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Contract</th>
+                <th>Qty</th>
+                <th>Avg</th>
+                <th>Mark</th>
+                <th>Margin</th>
+                <th>P/L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {portfolio.futuresPositions.length ? (
+                portfolio.futuresPositions.map((position) => (
+                  <tr key={position.symbol}>
+                    <td>{position.symbol}</td>
+                    <td>{position.quantity}</td>
+                    <td>{formatMoney(position.averagePrice)}</td>
+                    <td>{formatMoney(position.markPrice)}</td>
+                    <td>{formatMoney(position.marketValue)}</td>
+                    <td className={position.unrealizedPnl >= 0 ? "gain" : "loss"}>
+                      {formatMoney(position.unrealizedPnl)} · {formatPercent(position.unrealizedPnlPercent)}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="6">No paper futures positions.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </article>
+
+        <article className="card">
           <h2>Recent Paper Trades</h2>
           <table>
             <thead>
@@ -1969,7 +2094,7 @@ function App() {
                 portfolio.trades.map((trade) => (
                   <tr key={trade.id}>
                     <td>{new Date(trade.createdAt).toLocaleTimeString()}</td>
-                    <td>{trade.assetType === "option" ? trade.description : trade.symbol}</td>
+                    <td>{trade.assetType === "option" || trade.assetType === "future" ? trade.description : trade.symbol}</td>
                     <td>
                       <span className={`pill ${trade.side}`}>{trade.side}</span>
                     </td>
