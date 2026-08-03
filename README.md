@@ -14,6 +14,8 @@ This project is intentionally safe by default: it simulates paper trades in the 
 - Backtest slippage and commission assumptions before paper testing.
 - 1-3% average-trade target scoring with drawdown, win-rate, trade-count, and profit-factor checks.
 - Browser learning journal that saves repeated test runs locally and scores evidence over time.
+- Capital Guard, Moderate Bullish, and Pattern Confirmed risk profiles.
+- Stop loss, take profit, trailing stop, protected-profit giveback, and consecutive win/loss halt rules.
 - Alpha V1 capability brief and in-app self tests to preserve project requirements.
 - Paper order ticket with buy/sell validation.
 - Paper portfolio with equity, exposure, realized P/L, positions, and recent trades saved in browser storage.
@@ -63,9 +65,12 @@ Use the Discipline Rules panel before paper-money testing:
 1. Keep the default 1-3% average completed-trade target unless you have a specific reason to change it.
 2. Run the backtest for one symbol and strategy.
 3. Save the test run only after reviewing drawdown, win rate, profit factor, and completed trade count.
-4. Repeat across symbols and strategies until the Learning Journal has enough qualified runs to show repeatable evidence.
+4. Confirm stop-loss, take-profit, trailing-stop, and streak-stop behavior before trusting the setup.
+5. Repeat across symbols and strategies until the Learning Journal has enough qualified runs to show repeatable evidence.
 
 The journal is stored in browser local storage. It is not financial advice and it does not guarantee future returns.
+
+Risk profiles are intentionally capped. Moderate Bullish is still conservative, and Pattern Confirmed only increases sizing when the backtest recognizes trend, breakout, higher-low, and volume confirmation.
 
 ## Structure
 

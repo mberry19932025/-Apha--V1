@@ -6,7 +6,9 @@ export const projectCapabilities = [
   "Scanner, backtester, strategy comparison, and paper order ticket",
   "Backtest slippage and commission assumptions",
   "1-3% trade-target discipline scoring",
-  "Browser learning journal for repeated paper-test evidence"
+  "Browser learning journal for repeated paper-test evidence",
+  "Moderate bullish and pattern-confirmed risk profiles",
+  "Stop loss, take profit, trailing stop, profit lock, and streak-stop protections"
 ];
 
 export const projectTests = [
@@ -39,6 +41,21 @@ export const projectTests = [
       Number.isFinite(backtest?.summary?.averageTradeReturnPercent) &&
       Number.isFinite(backtest?.summary?.profitFactor) &&
       currentEvaluation?.checks?.length >= 5
+  },
+  {
+    id: "protective-exits",
+    label: "Backtest includes protective exits and stop rules",
+    run: ({ backtest }) =>
+      Number.isFinite(backtest?.config?.stopLossPercent) &&
+      Number.isFinite(backtest?.config?.takeProfitPercent) &&
+      Number.isFinite(backtest?.config?.trailingStopPercent) &&
+      Number.isFinite(backtest?.config?.maxConsecutiveLosses)
+  },
+  {
+    id: "risk-profile",
+    label: "Risk profile is capped unless a pattern is confirmed",
+    run: ({ backtest }) =>
+      ["capital-guard", "moderate-bullish", "pattern-confirmed"].includes(backtest?.config?.riskProfile)
   },
   {
     id: "learning-journal",

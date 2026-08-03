@@ -9,6 +9,12 @@ export const strategies = [
   { id: "buy-hold", name: "Buy & Hold" }
 ];
 
+export const riskProfiles = [
+  { id: "capital-guard", name: "Capital Guard", maxRiskPercent: 0.12 },
+  { id: "moderate-bullish", name: "Moderate Bullish", maxRiskPercent: 0.2 },
+  { id: "pattern-confirmed", name: "Pattern Confirmed", maxRiskPercent: 0.3 }
+];
+
 const basePrices = {
   AAPL: 212.45,
   MSFT: 426.8,
@@ -359,6 +365,72 @@ function strategyReason(strategyId, signal, { shortWindow, longWindow }) {
     : `${shortWindow}-day average crossed below ${longWindow}-day average`;
 }
 
+function averageVolume(candles, endIndex, window = 20) {
+  if (endIndex + 1 < window) {
+    return null;
+  }
+
+  let total = 0;
+  for (let index = endIndex - window + 1; index <= endIndex; index += 1) {
+    total += candles[index].volume;
+  }
+  return total / window;
+}
+
+function detectSetupPattern(candles, index, { shortWindow, longWindow }) {
+  const candle = candles[index];
+  const shortAverage = movingAverage(candles, index, shortWindow);
+  const longAverage = movingAverage(candles, index, longWindow);
+  const previousLongAverage = movingAverage(candles, index - 3, longWindow);
+  const recentWindow = candles.slice(Math.max(0, index - 20), index);
+  const recentHigh = recentWindow.length ? Math.max(...recentWindow.map((item) => item.high)) : null;
+  const recentLow = recentWindow.length ? Math.min(...recentWindow.map((item) => item.low)) : null;
+  const volumeAverage = averageVolume(candles, index, 20);
+  const trendUp =
+    shortAverage &&
+    longAverage &&
+    previousLongAverage &&
+    shortAverage > longAverage &&
+    longAverage >= previousLongAverage;
+  const breakout = Boolean(recentHigh && candle.close > recentHigh);
+  const higherLow = Boolean(recentLow && candle.low > recentLow * 1.01);
+  const volumeConfirm = Boolean(volumeAverage && candle.volume >= volumeAverage * 1.08);
+
+  if (trendUp && breakout && higherLow && volumeConfirm) {
+    return {
+      id: "bullish-breakout",
+      confirmed: true,
+      label: "Bullish breakout with trend, higher low, and volume confirmation"
+    };
+  }
+
+  if (trendUp && higherLow) {
+    return {
+      id: "moderate-bullish",
+      confirmed: false,
+      label: "Moderate bullish trend with higher-low structure"
+    };
+  }
+
+  return {
+    id: "unconfirmed",
+    confirmed: false,
+    label: "No confirmed bullish pattern"
+  };
+}
+
+function resolveRiskProfile(profileId, pattern) {
+  const requestedProfile = riskProfiles.some((profile) => profile.id === profileId)
+    ? profileId
+    : "moderate-bullish";
+
+  if (requestedProfile === "pattern-confirmed" && !pattern.confirmed) {
+    return riskProfiles.find((profile) => profile.id === "moderate-bullish");
+  }
+
+  return riskProfiles.find((profile) => profile.id === requestedProfile);
+}
+
 export function runBacktest(options = {}, dataBySymbol = {}) {
   const symbol = symbols.includes(String(options.symbol || "").toUpperCase())
     ? String(options.symbol).toUpperCase()
@@ -371,6 +443,16 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const slippagePercent = clampNumber(options.slippagePercent, 0.05, 0, 5);
   const commission = clampNumber(options.commission, 0, 0, 100);
   const targetProfitPercent = clampNumber(options.targetProfitPercent, 2, 0.25, 20);
+  const stopLossPercent = clampNumber(options.stopLossPercent, 2, 0.25, 20);
+  const takeProfitPercent = clampNumber(options.takeProfitPercent, 3, 0.25, 30);
+  const trailingStopPercent = clampNumber(options.trailingStopPercent, 1.25, 0, 20);
+  const profitLockPercent = clampNumber(options.profitLockPercent, 1, 0, 20);
+  const protectedProfitGivebackPercent = clampNumber(options.protectedProfitGivebackPercent, 1, 0.25, 20);
+  const maxConsecutiveLosses = Math.floor(clampNumber(options.maxConsecutiveLosses, 3, 1, 20));
+  const maxConsecutiveWins = Math.floor(clampNumber(options.maxConsecutiveWins, 4, 1, 20));
+  const riskProfileId = riskProfiles.some((profile) => profile.id === options.riskProfile)
+    ? options.riskProfile
+    : "moderate-bullish";
   const strategyId = strategies.some((strategy) => strategy.id === options.strategy)
     ? options.strategy
     : "ma-crossover";
@@ -384,22 +466,126 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   let shares = 0;
   let entryPrice = 0;
   let entryCost = 0;
+  let highestSinceEntry = 0;
   let peakEquity = startingCash;
+  let sessionPeakEquity = startingCash;
+  let consecutiveLosses = 0;
+  let consecutiveWins = 0;
+  let protectedHalts = 0;
+  let stopLossExits = 0;
+  let takeProfitExits = 0;
+  let trailingStopExits = 0;
+  let patternConfirmedEntries = 0;
+  let halted = false;
+  let haltReason = "";
+
+  function closePosition(candle, rawFillPrice, reason, exitType) {
+    const fillPrice = rawFillPrice * (1 - slippagePercent / 100);
+    const gross = shares * fillPrice;
+    const proceeds = gross - commission;
+    const pnl = (fillPrice - entryPrice) * shares - commission;
+    const returnPercent = entryCost ? (pnl / entryCost) * 100 : 0;
+    cash += proceeds;
+    trades.push({
+      date: candle.date,
+      side: "sell",
+      quantity: shares,
+      price: round(fillPrice),
+      gross: round(gross),
+      commission: round(commission),
+      netCash: round(proceeds),
+      pnl: round(pnl),
+      returnPercent: round(returnPercent, 2),
+      exitType,
+      reason
+    });
+
+    if (pnl > 0) {
+      consecutiveWins += 1;
+      consecutiveLosses = 0;
+    } else {
+      consecutiveLosses += 1;
+      consecutiveWins = 0;
+    }
+
+    if (exitType === "stop-loss") {
+      stopLossExits += 1;
+    } else if (exitType === "take-profit") {
+      takeProfitExits += 1;
+    } else if (exitType === "trailing-stop") {
+      trailingStopExits += 1;
+    }
+
+    shares = 0;
+    entryPrice = 0;
+    entryCost = 0;
+    highestSinceEntry = 0;
+
+    if (consecutiveLosses >= maxConsecutiveLosses) {
+      halted = true;
+      haltReason = `${consecutiveLosses} losses in a row`;
+      protectedHalts += 1;
+    } else if (consecutiveWins >= maxConsecutiveWins && cash >= startingCash * (1 + profitLockPercent / 100)) {
+      halted = true;
+      haltReason = `${consecutiveWins} wins in a row; profit protected`;
+      protectedHalts += 1;
+    }
+  }
 
   for (let index = 0; index < candles.length; index += 1) {
     const candle = candles[index];
     const equity = cash + shares * candle.close;
     const signal = strategySignals[index];
+    sessionPeakEquity = Math.max(sessionPeakEquity, equity);
 
-    if (signal === "buy" && shares === 0) {
+    if (
+      !halted &&
+      shares === 0 &&
+      equity >= startingCash * (1 + profitLockPercent / 100) &&
+      ((sessionPeakEquity - equity) / sessionPeakEquity) * 100 >= protectedProfitGivebackPercent
+    ) {
+      halted = true;
+      haltReason = "protected profit giveback limit reached";
+      protectedHalts += 1;
+    }
+
+    if (shares > 0) {
+      highestSinceEntry = Math.max(highestSinceEntry, candle.high);
+      const stopPrice = entryPrice * (1 - stopLossPercent / 100);
+      const takeProfitPrice = entryPrice * (1 + takeProfitPercent / 100);
+      const trailingStopPrice =
+        trailingStopPercent > 0 ? highestSinceEntry * (1 - trailingStopPercent / 100) : 0;
+
+      if (candle.low <= stopPrice) {
+        closePosition(candle, stopPrice, "Stop loss protected capital.", "stop-loss");
+      } else if (candle.high >= takeProfitPrice) {
+        closePosition(candle, takeProfitPrice, "Take profit captured target.", "take-profit");
+      } else if (trailingStopPrice > entryPrice && candle.low <= trailingStopPrice) {
+        closePosition(candle, trailingStopPrice, "Trailing stop protected open profit.", "trailing-stop");
+      }
+    }
+
+    if (!halted && signal === "buy" && shares === 0) {
+      const pattern = detectSetupPattern(candles, index, { shortWindow, longWindow });
+      const profile = resolveRiskProfile(riskProfileId, pattern);
+      const effectiveRiskPercent = Math.min(riskPercent, profile.maxRiskPercent);
+
+      if (riskProfileId === "pattern-confirmed" && !pattern.confirmed) {
+        continue;
+      }
+
       const fillPrice = candle.close * (1 + slippagePercent / 100);
-      const quantity = Math.floor((equity * riskPercent - commission) / fillPrice);
+      const quantity = Math.floor((equity * effectiveRiskPercent - commission) / fillPrice);
       if (quantity > 0) {
         const gross = quantity * fillPrice;
         const totalCost = gross + commission;
         shares = quantity;
         entryPrice = fillPrice;
         entryCost = totalCost;
+        highestSinceEntry = fillPrice;
+        if (pattern.confirmed) {
+          patternConfirmedEntries += 1;
+        }
         cash -= totalCost;
         trades.push({
           date: candle.date,
@@ -409,33 +595,21 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
           gross: round(gross),
           commission: round(commission),
           netCash: round(-totalCost),
-          reason: strategyReason(strategyId, "buy", { shortWindow, longWindow })
+          pattern: pattern.label,
+          riskProfile: profile.name,
+          effectiveRiskPercent: round(effectiveRiskPercent * 100, 2),
+          reason: `${strategyReason(strategyId, "buy", { shortWindow, longWindow })}. ${pattern.label}.`
         });
       }
     }
 
     if (signal === "sell" && shares > 0) {
-      const fillPrice = candle.close * (1 - slippagePercent / 100);
-      const gross = shares * fillPrice;
-      const proceeds = gross - commission;
-      const pnl = (fillPrice - entryPrice) * shares - commission;
-      const returnPercent = entryCost ? (pnl / entryCost) * 100 : 0;
-      cash += proceeds;
-      trades.push({
-        date: candle.date,
-        side: "sell",
-        quantity: shares,
-        price: round(fillPrice),
-        gross: round(gross),
-        commission: round(commission),
-        netCash: round(proceeds),
-        pnl: round(pnl),
-        returnPercent: round(returnPercent, 2),
-        reason: strategyReason(strategyId, "sell", { shortWindow, longWindow })
-      });
-      shares = 0;
-      entryPrice = 0;
-      entryCost = 0;
+      closePosition(
+        candle,
+        candle.close,
+        strategyReason(strategyId, "sell", { shortWindow, longWindow }),
+        "signal"
+      );
     }
 
     const markToMarket = cash + shares * candle.close;
@@ -450,24 +624,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
 
   const lastCandle = candles.at(-1);
   if (shares > 0 && lastCandle) {
-    const fillPrice = lastCandle.close * (1 - slippagePercent / 100);
-    const gross = shares * fillPrice;
-    const proceeds = gross - commission;
-    const pnl = (fillPrice - entryPrice) * shares - commission;
-    const returnPercent = entryCost ? (pnl / entryCost) * 100 : 0;
-    cash += proceeds;
-    trades.push({
-      date: lastCandle.date,
-      side: "sell",
-      quantity: shares,
-      price: round(fillPrice),
-      gross: round(gross),
-      commission: round(commission),
-      netCash: round(proceeds),
-      pnl: round(pnl),
-      returnPercent: round(returnPercent, 2),
-      reason: "Closed open position at end of backtest"
-    });
+    closePosition(lastCandle, lastCandle.close, "Closed open position at end of backtest", "end");
     equityCurve[equityCurve.length - 1].equity = round(cash);
   }
 
@@ -500,6 +657,14 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
       slippagePercent,
       commission,
       targetProfitPercent,
+      stopLossPercent,
+      takeProfitPercent,
+      trailingStopPercent,
+      profitLockPercent,
+      protectedProfitGivebackPercent,
+      maxConsecutiveLosses,
+      maxConsecutiveWins,
+      riskProfile: riskProfileId,
       strategy: strategyId
     },
     data: {
@@ -520,7 +685,14 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
       winRatePercent: sellTrades.length ? round((winningTrades.length / sellTrades.length) * 100, 2) : 0,
       averageTradeReturnPercent: round(averageTradeReturnPercent, 2),
       targetHitRatePercent: round(targetHitRatePercent, 2),
-      profitFactor: round(grossLoss ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0, 2)
+      profitFactor: round(grossLoss ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0, 2),
+      stopLossExits,
+      takeProfitExits,
+      trailingStopExits,
+      protectedHalts,
+      patternConfirmedEntries,
+      halted,
+      haltReason
     },
     candles: candles.slice(-90),
     equityCurve: equityCurve.slice(-160),
@@ -555,6 +727,14 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
   const slippagePercent = Number(options.slippagePercent || 0.05);
   const commission = Number(options.commission || 0);
   const targetProfitPercent = Number(options.targetProfitPercent || 2);
+  const stopLossPercent = Number(options.stopLossPercent || 2);
+  const takeProfitPercent = Number(options.takeProfitPercent || 3);
+  const trailingStopPercent = Number(options.trailingStopPercent || 1.25);
+  const profitLockPercent = Number(options.profitLockPercent || 1);
+  const protectedProfitGivebackPercent = Number(options.protectedProfitGivebackPercent || 1);
+  const maxConsecutiveLosses = Number(options.maxConsecutiveLosses || 3);
+  const maxConsecutiveWins = Number(options.maxConsecutiveWins || 4);
+  const riskProfile = options.riskProfile || "moderate-bullish";
   const strategyId = strategies.some((strategy) => strategy.id === options.strategy)
     ? options.strategy
     : "ma-crossover";
@@ -572,6 +752,14 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
           slippagePercent,
           commission,
           targetProfitPercent,
+          stopLossPercent,
+          takeProfitPercent,
+          trailingStopPercent,
+          profitLockPercent,
+          protectedProfitGivebackPercent,
+          maxConsecutiveLosses,
+          maxConsecutiveWins,
+          riskProfile,
           strategy: strategyId
         },
         dataBySymbol
@@ -608,6 +796,9 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
         winRatePercent: backtest.summary.winRatePercent,
         averageTradeReturnPercent: backtest.summary.averageTradeReturnPercent,
         targetHitRatePercent: backtest.summary.targetHitRatePercent,
+        stopLossExits: backtest.summary.stopLossExits,
+        protectedHalts: backtest.summary.protectedHalts,
+        patternConfirmedEntries: backtest.summary.patternConfirmedEntries,
         dataSource: data.source,
         strategy: strategyId,
         shortAverage: round(shortAverage),
@@ -619,7 +810,23 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
 
   return {
     generatedAt: new Date().toISOString(),
-    config: { shortWindow, longWindow, lookbackDays, riskPercent, slippagePercent, commission, targetProfitPercent },
+    config: {
+      shortWindow,
+      longWindow,
+      lookbackDays,
+      riskPercent,
+      slippagePercent,
+      commission,
+      targetProfitPercent,
+      stopLossPercent,
+      takeProfitPercent,
+      trailingStopPercent,
+      profitLockPercent,
+      protectedProfitGivebackPercent,
+      maxConsecutiveLosses,
+      maxConsecutiveWins,
+      riskProfile
+    },
     results
   };
 }
@@ -673,6 +880,22 @@ export function evaluateDiscipline(result, rules = {}) {
       id: "profit-factor",
       label: "Winning dollars are larger than losing dollars",
       passed: Number(summary.profitFactor || 0) >= 1
+    },
+    {
+      id: "protection",
+      label: "Protection rules are active for stops, profit locks, and streak limits",
+      passed:
+        Number.isFinite(result?.config?.stopLossPercent) &&
+        Number.isFinite(result?.config?.takeProfitPercent) &&
+        Number.isFinite(result?.config?.maxConsecutiveLosses)
+    },
+    {
+      id: "risk-profile",
+      label: "Risk profile avoids aggressive sizing unless a pattern is confirmed",
+      passed:
+        result?.config?.riskProfile !== "pattern-confirmed" ||
+        Number(summary.patternConfirmedEntries || 0) > 0 ||
+        Number(summary.completedTrades || 0) === 0
     }
   ];
   const score = Math.round((checks.filter((check) => check.passed).length / checks.length) * 100);

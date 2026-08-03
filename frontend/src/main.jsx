@@ -12,6 +12,7 @@ import {
   placePaperTrade,
   parseCandlesCsv,
   runBacktest,
+  riskProfiles,
   scanMarket,
   strategies,
   symbols
@@ -104,6 +105,14 @@ function App() {
     slippagePercent: 0.05,
     commission: 0,
     targetProfitPercent: 2,
+    stopLossPercent: 2,
+    takeProfitPercent: 3,
+    trailingStopPercent: 1.25,
+    profitLockPercent: 1,
+    protectedProfitGivebackPercent: 1,
+    maxConsecutiveLosses: 3,
+    maxConsecutiveWins: 4,
+    riskProfile: "moderate-bullish",
     strategy: "ma-crossover"
   });
   const [disciplineForm, setDisciplineForm] = useState({
@@ -540,6 +549,21 @@ function App() {
               </select>
             </label>
             <label>
+              Risk Profile
+              <select
+                value={backtestForm.riskProfile}
+                onChange={(event) =>
+                  setBacktestForm({ ...backtestForm, riskProfile: event.target.value })
+                }
+              >
+                {riskProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Starting Cash
               <input
                 type="number"
@@ -650,6 +674,124 @@ function App() {
                 }
               />
             </label>
+            <div className="form-row">
+              <label>
+                Stop Loss %
+                <input
+                  type="number"
+                  min="0.25"
+                  max="20"
+                  step="0.25"
+                  value={backtestForm.stopLossPercent}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      stopLossPercent: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Take Profit %
+                <input
+                  type="number"
+                  min="0.25"
+                  max="30"
+                  step="0.25"
+                  value={backtestForm.takeProfitPercent}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      takeProfitPercent: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                Trail Stop %
+                <input
+                  type="number"
+                  min="0"
+                  max="20"
+                  step="0.25"
+                  value={backtestForm.trailingStopPercent}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      trailingStopPercent: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Profit Lock %
+                <input
+                  type="number"
+                  min="0"
+                  max="20"
+                  step="0.25"
+                  value={backtestForm.profitLockPercent}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      profitLockPercent: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                Giveback %
+                <input
+                  type="number"
+                  min="0.25"
+                  max="20"
+                  step="0.25"
+                  value={backtestForm.protectedProfitGivebackPercent}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      protectedProfitGivebackPercent: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Max Bad Trades
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  step="1"
+                  value={backtestForm.maxConsecutiveLosses}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      maxConsecutiveLosses: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <label>
+              Max Good Trades Before Stop
+              <input
+                type="number"
+                min="1"
+                max="20"
+                step="1"
+                value={backtestForm.maxConsecutiveWins}
+                onChange={(event) =>
+                  setBacktestForm({
+                    ...backtestForm,
+                    maxConsecutiveWins: Number(event.target.value)
+                  })
+                }
+              />
+            </label>
             <button type="submit" disabled={backtestLoading}>
               {backtestLoading ? "Running..." : "Run Backtest"}
             </button>
@@ -669,6 +811,10 @@ function App() {
               </span>
               <span className={`pill ${currentEvaluation.verdict === "qualified" ? "buy" : "hold"}`}>
                 {currentEvaluation.verdict}
+              </span>
+              <span className="pill hold">
+                {riskProfiles.find((profile) => profile.id === backtest?.config?.riskProfile)?.name ||
+                  "Risk"}
               </span>
             </div>
           </div>
@@ -705,7 +851,32 @@ function App() {
               <small>Profit Factor</small>
               <strong>{Number(backtest?.summary?.profitFactor || 0).toFixed(2)}</strong>
             </div>
+            <div>
+              <small>Stop Exits</small>
+              <strong>{backtest?.summary?.stopLossExits || 0}</strong>
+            </div>
+            <div>
+              <small>Profit Exits</small>
+              <strong>{backtest?.summary?.takeProfitExits || 0}</strong>
+            </div>
+            <div>
+              <small>Trail Exits</small>
+              <strong>{backtest?.summary?.trailingStopExits || 0}</strong>
+            </div>
+            <div>
+              <small>Protected Stops</small>
+              <strong>{backtest?.summary?.protectedHalts || 0}</strong>
+            </div>
+            <div>
+              <small>Pattern Entries</small>
+              <strong>{backtest?.summary?.patternConfirmedEntries || 0}</strong>
+            </div>
           </div>
+          {backtest?.summary?.halted && (
+            <p className="signal-note">
+              Protection halt: <strong>{backtest.summary.haltReason}</strong>
+            </p>
+          )}
           <div className="chart" aria-label="Backtest equity curve">
             <svg viewBox="0 0 640 180" role="img">
               <path className="chart-fill" d={`${equityPath} L 640 180 L 0 180 Z`} />
@@ -720,6 +891,7 @@ function App() {
                 <th>Qty</th>
                 <th>Price</th>
                 <th>Fees</th>
+                <th>Exit</th>
                 <th>Trade %</th>
                 <th>P/L</th>
               </tr>
@@ -737,6 +909,7 @@ function App() {
                     <td>{trade.quantity}</td>
                     <td>{formatMoney(trade.price)}</td>
                     <td>{formatMoney(trade.commission)}</td>
+                    <td>{trade.exitType || "-"}</td>
                     <td className={(trade.returnPercent || 0) >= 0 ? "gain" : "loss"}>
                       {trade.returnPercent === undefined ? "-" : formatPercent(trade.returnPercent)}
                     </td>
@@ -747,7 +920,7 @@ function App() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="7">No trades triggered.</td>
+                  <td colSpan="8">No trades triggered.</td>
                 </tr>
               )}
             </tbody>
@@ -937,6 +1110,8 @@ function App() {
               <th>Max DD</th>
               <th>Win Rate</th>
               <th>Avg Trade</th>
+              <th>Stops</th>
+              <th>Halts</th>
               <th>Trades</th>
               <th>Data</th>
             </tr>
@@ -953,6 +1128,8 @@ function App() {
                 <td className={result.summary.averageTradeReturnPercent >= 0 ? "gain" : "loss"}>
                   {formatPercent(result.summary.averageTradeReturnPercent)}
                 </td>
+                <td>{result.summary.stopLossExits}</td>
+                <td>{result.summary.protectedHalts}</td>
                 <td>{result.summary.totalTrades}</td>
                 <td>
                   <span className={`pill ${result.data.source === "csv" ? "buy" : "hold"}`}>
