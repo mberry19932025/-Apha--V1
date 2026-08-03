@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  analyzeLearningJournal,
   buildPortfolio,
   createInitialPortfolio,
+  evaluateDiscipline,
   getDataStatus,
   getMarketSnapshot,
   getSignals,
@@ -19,6 +21,7 @@ import "./styles.css";
 
 const portfolioKey = "apex-alpha-static-portfolio";
 const uploadedDataKey = "apex-alpha-uploaded-data";
+const learningJournalKey = "apex-alpha-learning-journal";
 
 function formatMoney(value) {
   return new Intl.NumberFormat("en-US", {
@@ -70,6 +73,16 @@ function loadUploadedData() {
   }
 }
 
+function loadLearningJournal() {
+  try {
+    const stored = localStorage.getItem(learningJournalKey);
+    const parsed = stored ? JSON.parse(stored) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function App() {
   const [dataBySymbol, setDataBySymbol] = useState({});
   const [bundledData, setBundledData] = useState({});
@@ -90,8 +103,17 @@ function App() {
     riskPercent: 25,
     slippagePercent: 0.05,
     commission: 0,
+    targetProfitPercent: 2,
     strategy: "ma-crossover"
   });
+  const [disciplineForm, setDisciplineForm] = useState({
+    minProfitPercent: 1,
+    maxProfitPercent: 3,
+    maxDrawdownPercent: 5,
+    minWinRatePercent: 45,
+    minTrades: 2
+  });
+  const [learningJournal, setLearningJournal] = useState(loadLearningJournal);
   const [backtest, setBacktest] = useState(null);
 
   const signals = useMemo(() => getSignals(market), [market]);
@@ -103,6 +125,11 @@ function App() {
   );
   const bestSetup = scanner?.results?.[0];
   const equityPath = buildPath(backtest?.equityCurve || []);
+  const currentEvaluation = useMemo(
+    () => evaluateDiscipline(backtest, disciplineForm),
+    [backtest, disciplineForm]
+  );
+  const learningSummary = useMemo(() => analyzeLearningJournal(learningJournal), [learningJournal]);
   const strategyComparison = useMemo(
     () =>
       strategies.map((strategy) => {
@@ -122,9 +149,17 @@ function App() {
     () =>
       projectTests.map((test) => ({
         ...test,
-        passed: test.run({ backtest, dataStatus, portfolio, scanner, strategyComparison })
+        passed: test.run({
+          backtest,
+          currentEvaluation,
+          dataStatus,
+          learningSummary,
+          portfolio,
+          scanner,
+          strategyComparison
+        })
       })),
-    [backtest, dataStatus, portfolio, scanner, strategyComparison]
+    [backtest, currentEvaluation, dataStatus, learningSummary, portfolio, scanner, strategyComparison]
   );
   const passedTests = selfTests.filter((test) => test.passed).length;
 
@@ -132,15 +167,16 @@ function App() {
     async function init() {
       const loadedBundledData = await loadBundledData();
       const mergedData = { ...loadedBundledData, ...uploadedData };
+      const config = {
+        ...backtestForm,
+        riskPercent: Number(backtestForm.riskPercent) / 100
+      };
       setBundledData(loadedBundledData);
       setDataBySymbol(mergedData);
-      setBacktest(runBacktest(backtestForm, mergedData));
+      setBacktest(runBacktest(config, mergedData));
       setScanner(
         scanMarket(
-          {
-            ...backtestForm,
-            riskPercent: Number(backtestForm.riskPercent) / 100
-          },
+          config,
           mergedData,
           market
         )
@@ -159,6 +195,10 @@ function App() {
     localStorage.setItem(uploadedDataKey, JSON.stringify(uploadedData));
     setDataBySymbol({ ...bundledData, ...uploadedData });
   }, [uploadedData, bundledData]);
+
+  useEffect(() => {
+    localStorage.setItem(learningJournalKey, JSON.stringify(learningJournal));
+  }, [learningJournal]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -248,17 +288,41 @@ function App() {
   }
 
   function clearUploadedData() {
+    const config = {
+      ...backtestForm,
+      riskPercent: Number(backtestForm.riskPercent) / 100
+    };
     setUploadedData({});
     setDataBySymbol(bundledData);
-    setBacktest(runBacktest(backtestForm, bundledData));
-    setScanner(
-      scanMarket(
-        { ...backtestForm, riskPercent: Number(backtestForm.riskPercent) / 100 },
-        bundledData,
-        market
-      )
-    );
+    setBacktest(runBacktest(config, bundledData));
+    setScanner(scanMarket(config, bundledData, market));
     setMessage("Uploaded CSV data cleared.");
+  }
+
+  function saveLearningRun() {
+    if (!backtest) {
+      return;
+    }
+
+    const strategyName =
+      strategies.find((strategy) => strategy.id === backtest.config.strategy)?.name ||
+      backtest.config.strategy;
+    const run = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      symbol: backtest.config.symbol,
+      strategy: strategyName,
+      config: backtest.config,
+      summary: backtest.summary,
+      evaluation: currentEvaluation
+    };
+    setLearningJournal((current) => [run, ...current].slice(0, 100));
+    setMessage(`Saved ${run.symbol} ${strategyName} test run with ${currentEvaluation.score}/100 discipline score.`);
+  }
+
+  function clearLearningJournal() {
+    setLearningJournal([]);
+    setMessage("Learning journal cleared.");
   }
 
   function useScanPick(result) {
@@ -310,6 +374,10 @@ function App() {
         <div>
           <small>Top Setup</small>
           <strong>{bestSetup ? `${bestSetup.symbol} · ${bestSetup.score}` : "Scanning"}</strong>
+        </div>
+        <div>
+          <small>Learning Score</small>
+          <strong>{learningSummary.totalRuns ? `${learningSummary.averageScore}/100` : "0/100"}</strong>
         </div>
       </section>
 
@@ -566,6 +634,22 @@ function App() {
                 />
               </label>
             </div>
+            <label>
+              Trade Target %
+              <input
+                type="number"
+                min="0.25"
+                max="20"
+                step="0.25"
+                value={backtestForm.targetProfitPercent}
+                onChange={(event) =>
+                  setBacktestForm({
+                    ...backtestForm,
+                    targetProfitPercent: Number(event.target.value)
+                  })
+                }
+              />
+            </label>
             <button type="submit" disabled={backtestLoading}>
               {backtestLoading ? "Running..." : "Run Backtest"}
             </button>
@@ -583,9 +667,12 @@ function App() {
               <span className={`pill ${backtest?.data?.source === "csv" ? "buy" : "hold"}`}>
                 {backtest?.data?.source || "simulated"}
               </span>
+              <span className={`pill ${currentEvaluation.verdict === "qualified" ? "buy" : "hold"}`}>
+                {currentEvaluation.verdict}
+              </span>
             </div>
           </div>
-          <div className="metrics four">
+          <div className="metrics six">
             <div>
               <small>Final Equity</small>
               <strong>{formatMoney(backtest?.summary?.finalEquity)}</strong>
@@ -604,6 +691,20 @@ function App() {
               <small>Win Rate</small>
               <strong>{formatPercent(backtest?.summary?.winRatePercent)}</strong>
             </div>
+            <div>
+              <small>Avg Trade</small>
+              <strong className={backtest?.summary?.averageTradeReturnPercent >= 0 ? "gain" : "loss"}>
+                {formatPercent(backtest?.summary?.averageTradeReturnPercent)}
+              </strong>
+            </div>
+            <div>
+              <small>Target Hits</small>
+              <strong>{formatPercent(backtest?.summary?.targetHitRatePercent)}</strong>
+            </div>
+            <div>
+              <small>Profit Factor</small>
+              <strong>{Number(backtest?.summary?.profitFactor || 0).toFixed(2)}</strong>
+            </div>
           </div>
           <div className="chart" aria-label="Backtest equity curve">
             <svg viewBox="0 0 640 180" role="img">
@@ -619,6 +720,7 @@ function App() {
                 <th>Qty</th>
                 <th>Price</th>
                 <th>Fees</th>
+                <th>Trade %</th>
                 <th>P/L</th>
               </tr>
             </thead>
@@ -635,6 +737,9 @@ function App() {
                     <td>{trade.quantity}</td>
                     <td>{formatMoney(trade.price)}</td>
                     <td>{formatMoney(trade.commission)}</td>
+                    <td className={(trade.returnPercent || 0) >= 0 ? "gain" : "loss"}>
+                      {trade.returnPercent === undefined ? "-" : formatPercent(trade.returnPercent)}
+                    </td>
                     <td className={(trade.pnl || 0) >= 0 ? "gain" : "loss"}>
                       {trade.pnl === undefined ? "-" : formatMoney(trade.pnl)}
                     </td>
@@ -642,11 +747,183 @@ function App() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="6">No trades triggered.</td>
+                  <td colSpan="7">No trades triggered.</td>
                 </tr>
               )}
             </tbody>
           </table>
+        </article>
+      </section>
+
+      <section className="discipline-grid">
+        <article className="card">
+          <div className="card-header">
+            <h2>Discipline Rules</h2>
+            <span className={`pill ${currentEvaluation.verdict === "qualified" ? "buy" : "hold"}`}>
+              {currentEvaluation.score}/100
+            </span>
+          </div>
+          <div className="form-row">
+            <label>
+              Min Trade %
+              <input
+                type="number"
+                min="0"
+                max="20"
+                step="0.25"
+                value={disciplineForm.minProfitPercent}
+                onChange={(event) =>
+                  setDisciplineForm({
+                    ...disciplineForm,
+                    minProfitPercent: Number(event.target.value)
+                  })
+                }
+              />
+            </label>
+            <label>
+              Max Trade %
+              <input
+                type="number"
+                min="0.25"
+                max="50"
+                step="0.25"
+                value={disciplineForm.maxProfitPercent}
+                onChange={(event) =>
+                  setDisciplineForm({
+                    ...disciplineForm,
+                    maxProfitPercent: Number(event.target.value)
+                  })
+                }
+              />
+            </label>
+          </div>
+          <div className="form-row">
+            <label>
+              Max Drawdown %
+              <input
+                type="number"
+                min="0.25"
+                max="80"
+                step="0.25"
+                value={disciplineForm.maxDrawdownPercent}
+                onChange={(event) =>
+                  setDisciplineForm({
+                    ...disciplineForm,
+                    maxDrawdownPercent: Number(event.target.value)
+                  })
+                }
+              />
+            </label>
+            <label>
+              Min Win Rate %
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                value={disciplineForm.minWinRatePercent}
+                onChange={(event) =>
+                  setDisciplineForm({
+                    ...disciplineForm,
+                    minWinRatePercent: Number(event.target.value)
+                  })
+                }
+              />
+            </label>
+          </div>
+          <label>
+            Min Completed Trades
+            <input
+              type="number"
+              min="1"
+              max="100"
+              step="1"
+              value={disciplineForm.minTrades}
+              onChange={(event) =>
+                setDisciplineForm({ ...disciplineForm, minTrades: Number(event.target.value) })
+              }
+            />
+          </label>
+          <div className="brief-list discipline-checks">
+            {currentEvaluation.checks.map((check) => (
+              <div className="brief-item" key={check.id}>
+                <span className={check.passed ? "checkmark" : "xmark"}>
+                  {check.passed ? "✓" : "!"}
+                </span>
+                <span>{check.label}</span>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={saveLearningRun}>
+            Save Test Run
+          </button>
+        </article>
+
+        <article className="card">
+          <div className="card-header">
+            <h2>Learning Journal</h2>
+            <button type="button" className="secondary danger" onClick={clearLearningJournal}>
+              Clear
+            </button>
+          </div>
+          <div className="metrics four">
+            <div>
+              <small>Saved Runs</small>
+              <strong>{learningSummary.totalRuns}</strong>
+            </div>
+            <div>
+              <small>Qualified</small>
+              <strong>{learningSummary.qualifiedRuns}</strong>
+            </div>
+            <div>
+              <small>Avg Score</small>
+              <strong>{learningSummary.averageScore}/100</strong>
+            </div>
+            <div>
+              <small>Evidence</small>
+              <strong>{learningSummary.evidenceLevel}</strong>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Run</th>
+                <th>Setup</th>
+                <th>Avg Trade</th>
+                <th>Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {learningJournal.length ? (
+                learningJournal.slice(0, 8).map((run) => (
+                  <tr key={run.id}>
+                    <td>{new Date(run.createdAt).toLocaleDateString()}</td>
+                    <td>
+                      {run.symbol} · {run.strategy}
+                    </td>
+                    <td
+                      className={
+                        run.summary.averageTradeReturnPercent >= 0 ? "gain" : "loss"
+                      }
+                    >
+                      {formatPercent(run.summary.averageTradeReturnPercent)}
+                    </td>
+                    <td>{run.evaluation.score}/100</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="4">Save repeated paper tests to build evidence.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {learningSummary.bestStrategy && (
+            <p className="signal-note">
+              Best repeated setup: <strong>{learningSummary.bestStrategy.strategy}</strong> ·{" "}
+              {learningSummary.bestStrategy.averageScore}/100 average.
+            </p>
+          )}
         </article>
       </section>
 
@@ -659,6 +936,7 @@ function App() {
               <th>Return</th>
               <th>Max DD</th>
               <th>Win Rate</th>
+              <th>Avg Trade</th>
               <th>Trades</th>
               <th>Data</th>
             </tr>
@@ -672,6 +950,9 @@ function App() {
                 </td>
                 <td className="loss">{formatPercent(result.summary.maxDrawdownPercent)}</td>
                 <td>{formatPercent(result.summary.winRatePercent)}</td>
+                <td className={result.summary.averageTradeReturnPercent >= 0 ? "gain" : "loss"}>
+                  {formatPercent(result.summary.averageTradeReturnPercent)}
+                </td>
                 <td>{result.summary.totalTrades}</td>
                 <td>
                   <span className={`pill ${result.data.source === "csv" ? "buy" : "hold"}`}>

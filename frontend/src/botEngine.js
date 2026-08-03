@@ -370,6 +370,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const riskPercent = clampNumber(options.riskPercent, 0.25, 0.05, 1);
   const slippagePercent = clampNumber(options.slippagePercent, 0.05, 0, 5);
   const commission = clampNumber(options.commission, 0, 0, 100);
+  const targetProfitPercent = clampNumber(options.targetProfitPercent, 2, 0.25, 20);
   const strategyId = strategies.some((strategy) => strategy.id === options.strategy)
     ? options.strategy
     : "ma-crossover";
@@ -382,6 +383,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   let cash = startingCash;
   let shares = 0;
   let entryPrice = 0;
+  let entryCost = 0;
   let peakEquity = startingCash;
 
   for (let index = 0; index < candles.length; index += 1) {
@@ -397,6 +399,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
         const totalCost = gross + commission;
         shares = quantity;
         entryPrice = fillPrice;
+        entryCost = totalCost;
         cash -= totalCost;
         trades.push({
           date: candle.date,
@@ -416,6 +419,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
       const gross = shares * fillPrice;
       const proceeds = gross - commission;
       const pnl = (fillPrice - entryPrice) * shares - commission;
+      const returnPercent = entryCost ? (pnl / entryCost) * 100 : 0;
       cash += proceeds;
       trades.push({
         date: candle.date,
@@ -426,10 +430,12 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
         commission: round(commission),
         netCash: round(proceeds),
         pnl: round(pnl),
+        returnPercent: round(returnPercent, 2),
         reason: strategyReason(strategyId, "sell", { shortWindow, longWindow })
       });
       shares = 0;
       entryPrice = 0;
+      entryCost = 0;
     }
 
     const markToMarket = cash + shares * candle.close;
@@ -448,6 +454,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
     const gross = shares * fillPrice;
     const proceeds = gross - commission;
     const pnl = (fillPrice - entryPrice) * shares - commission;
+    const returnPercent = entryCost ? (pnl / entryCost) * 100 : 0;
     cash += proceeds;
     trades.push({
       date: lastCandle.date,
@@ -458,6 +465,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
       commission: round(commission),
       netCash: round(proceeds),
       pnl: round(pnl),
+      returnPercent: round(returnPercent, 2),
       reason: "Closed open position at end of backtest"
     });
     equityCurve[equityCurve.length - 1].equity = round(cash);
@@ -465,6 +473,20 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
 
   const sellTrades = trades.filter((trade) => trade.side === "sell");
   const winningTrades = sellTrades.filter((trade) => trade.pnl > 0);
+  const grossProfit = sellTrades
+    .filter((trade) => trade.pnl > 0)
+    .reduce((sum, trade) => sum + trade.pnl, 0);
+  const grossLoss = Math.abs(
+    sellTrades.filter((trade) => trade.pnl < 0).reduce((sum, trade) => sum + trade.pnl, 0)
+  );
+  const averageTradeReturnPercent = sellTrades.length
+    ? sellTrades.reduce((sum, trade) => sum + (trade.returnPercent || 0), 0) / sellTrades.length
+    : 0;
+  const targetHitRatePercent = sellTrades.length
+    ? (sellTrades.filter((trade) => (trade.returnPercent || 0) >= targetProfitPercent).length /
+        sellTrades.length) *
+      100
+    : 0;
   const finalEquity = equityCurve.at(-1)?.equity || startingCash;
 
   return {
@@ -477,6 +499,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
       riskPercent,
       slippagePercent,
       commission,
+      targetProfitPercent,
       strategy: strategyId
     },
     data: {
@@ -494,7 +517,10 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
       maxDrawdownPercent: round(calculateMaxDrawdown(equityCurve) * 100, 2),
       totalTrades: trades.length,
       completedTrades: sellTrades.length,
-      winRatePercent: sellTrades.length ? round((winningTrades.length / sellTrades.length) * 100, 2) : 0
+      winRatePercent: sellTrades.length ? round((winningTrades.length / sellTrades.length) * 100, 2) : 0,
+      averageTradeReturnPercent: round(averageTradeReturnPercent, 2),
+      targetHitRatePercent: round(targetHitRatePercent, 2),
+      profitFactor: round(grossLoss ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0, 2)
     },
     candles: candles.slice(-90),
     equityCurve: equityCurve.slice(-160),
@@ -526,6 +552,9 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
   const longWindow = Number(options.longWindow || 50);
   const lookbackDays = Number(options.lookbackDays || 260);
   const riskPercent = Number(options.riskPercent || 0.25);
+  const slippagePercent = Number(options.slippagePercent || 0.05);
+  const commission = Number(options.commission || 0);
+  const targetProfitPercent = Number(options.targetProfitPercent || 2);
   const strategyId = strategies.some((strategy) => strategy.id === options.strategy)
     ? options.strategy
     : "ma-crossover";
@@ -534,7 +563,17 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
   const results = symbols
     .map((symbol) => {
       const backtest = runBacktest(
-        { symbol, shortWindow, longWindow, lookbackDays, riskPercent, strategy: strategyId },
+        {
+          symbol,
+          shortWindow,
+          longWindow,
+          lookbackDays,
+          riskPercent,
+          slippagePercent,
+          commission,
+          targetProfitPercent,
+          strategy: strategyId
+        },
         dataBySymbol
       );
       const data = getHistoricalCandlesWithSource(
@@ -567,6 +606,8 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
         backtestReturnPercent: backtest.summary.returnPercent,
         maxDrawdownPercent: backtest.summary.maxDrawdownPercent,
         winRatePercent: backtest.summary.winRatePercent,
+        averageTradeReturnPercent: backtest.summary.averageTradeReturnPercent,
+        targetHitRatePercent: backtest.summary.targetHitRatePercent,
         dataSource: data.source,
         strategy: strategyId,
         shortAverage: round(shortAverage),
@@ -578,7 +619,7 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
 
   return {
     generatedAt: new Date().toISOString(),
-    config: { shortWindow, longWindow, lookbackDays, riskPercent },
+    config: { shortWindow, longWindow, lookbackDays, riskPercent, slippagePercent, commission, targetProfitPercent },
     results
   };
 }
@@ -594,6 +635,93 @@ export function getDataStatus(dataBySymbol = {}) {
       lastDate: candles.at(-1)?.date || null
     };
   });
+}
+
+export function evaluateDiscipline(result, rules = {}) {
+  const minProfitPercent = clampNumber(rules.minProfitPercent, 1, 0, 20);
+  const maxProfitPercent = clampNumber(rules.maxProfitPercent, 3, minProfitPercent, 50);
+  const maxDrawdownPercent = clampNumber(rules.maxDrawdownPercent, 5, 0.25, 80);
+  const minWinRatePercent = clampNumber(rules.minWinRatePercent, 45, 0, 100);
+  const minTrades = Math.floor(clampNumber(rules.minTrades, 2, 1, 100));
+  const summary = result?.summary || {};
+  const averageTradeReturnPercent = Number(summary.averageTradeReturnPercent || 0);
+  const completedTrades = Number(summary.completedTrades || 0);
+  const checks = [
+    {
+      id: "profit-target",
+      label: "Average completed trade is inside the 1-3% target zone",
+      passed:
+        averageTradeReturnPercent >= minProfitPercent &&
+        averageTradeReturnPercent <= maxProfitPercent
+    },
+    {
+      id: "drawdown",
+      label: "Drawdown stays under the risk limit",
+      passed: Number(summary.maxDrawdownPercent || 0) <= maxDrawdownPercent
+    },
+    {
+      id: "win-rate",
+      label: "Win rate clears the minimum quality bar",
+      passed: Number(summary.winRatePercent || 0) >= minWinRatePercent
+    },
+    {
+      id: "sample-size",
+      label: "Enough completed trades to count this run",
+      passed: completedTrades >= minTrades
+    },
+    {
+      id: "profit-factor",
+      label: "Winning dollars are larger than losing dollars",
+      passed: Number(summary.profitFactor || 0) >= 1
+    }
+  ];
+  const score = Math.round((checks.filter((check) => check.passed).length / checks.length) * 100);
+
+  return {
+    score,
+    verdict: score >= 80 ? "qualified" : score >= 60 ? "watch" : "collecting",
+    checks,
+    rules: {
+      minProfitPercent,
+      maxProfitPercent,
+      maxDrawdownPercent,
+      minWinRatePercent,
+      minTrades
+    }
+  };
+}
+
+export function analyzeLearningJournal(runs = []) {
+  const validRuns = Array.isArray(runs) ? runs : [];
+  const qualifiedRuns = validRuns.filter((run) => run.evaluation?.verdict === "qualified");
+  const averageScore = validRuns.length
+    ? validRuns.reduce((sum, run) => sum + Number(run.evaluation?.score || 0), 0) / validRuns.length
+    : 0;
+  const strategyScores = validRuns.reduce((map, run) => {
+    const key = run.strategy || "unknown";
+    const current = map.get(key) || { strategy: key, score: 0, runs: 0 };
+    current.score += Number(run.evaluation?.score || 0);
+    current.runs += 1;
+    map.set(key, current);
+    return map;
+  }, new Map());
+  const bestStrategy = [...strategyScores.values()]
+    .map((item) => ({ ...item, averageScore: round(item.score / item.runs, 1) }))
+    .sort((a, b) => b.averageScore - a.averageScore)[0] || null;
+
+  return {
+    totalRuns: validRuns.length,
+    qualifiedRuns: qualifiedRuns.length,
+    averageScore: round(averageScore, 1),
+    bestStrategy,
+    lastRun: validRuns[0] || null,
+    evidenceLevel:
+      validRuns.length >= 20 && qualifiedRuns.length >= 10
+        ? "strong"
+        : validRuns.length >= 10 && qualifiedRuns.length >= 4
+          ? "building"
+          : "early"
+  };
 }
 
 export function createInitialPortfolio() {

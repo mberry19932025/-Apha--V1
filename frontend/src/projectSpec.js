@@ -4,7 +4,9 @@ export const projectCapabilities = [
   "Browser CSV upload for manual data refreshes",
   "Paper portfolio saved in browser storage",
   "Scanner, backtester, strategy comparison, and paper order ticket",
-  "Backtest slippage and commission assumptions"
+  "Backtest slippage and commission assumptions",
+  "1-3% trade-target discipline scoring",
+  "Browser learning journal for repeated paper-test evidence"
 ];
 
 export const projectTests = [
@@ -29,6 +31,21 @@ export const projectTests = [
     run: ({ backtest }) =>
       Number.isFinite(backtest?.config?.slippagePercent) &&
       Number.isFinite(backtest?.config?.commission)
+  },
+  {
+    id: "discipline-score",
+    label: "Discipline score uses target profit and risk checks",
+    run: ({ backtest, currentEvaluation }) =>
+      Number.isFinite(backtest?.summary?.averageTradeReturnPercent) &&
+      Number.isFinite(backtest?.summary?.profitFactor) &&
+      currentEvaluation?.checks?.length >= 5
+  },
+  {
+    id: "learning-journal",
+    label: "Learning journal is ready for repeated test collection",
+    run: ({ learningSummary }) =>
+      Number.isFinite(learningSummary?.totalRuns) &&
+      ["early", "building", "strong"].includes(learningSummary?.evidenceLevel)
   },
   {
     id: "scanner-results",

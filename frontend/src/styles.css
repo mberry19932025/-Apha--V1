@@ -138,7 +138,7 @@ h2 {
 
 .summary-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -172,6 +172,10 @@ h2 {
 
 .metrics.four {
   grid-template-columns: repeat(4, 1fr);
+}
+
+.metrics.six {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .metrics div {
@@ -391,6 +395,17 @@ button:disabled {
   margin-bottom: 18px;
 }
 
+.discipline-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(0, 1.05fr);
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.discipline-checks {
+  margin: 14px 0;
+}
+
 .form-row,
 .card-header {
   display: grid;
@@ -476,6 +491,7 @@ button:disabled {
   .brief-grid,
   .scanner-grid,
   .backtest-layout,
+  .discipline-grid,
   .summary-strip {
     grid-template-columns: 1fr;
   }
@@ -487,6 +503,7 @@ button:disabled {
 
   .metrics,
   .metrics.four,
+  .metrics.six,
   .form-row,
   .upload-row {
     grid-template-columns: 1fr;

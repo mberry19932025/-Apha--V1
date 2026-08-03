@@ -12,12 +12,14 @@ This project is intentionally safe by default: it simulates paper trades in the 
 - Strategy selector with MA crossover, RSI reversion, MACD trend, and buy-and-hold benchmark.
 - Strategy comparison table for the selected symbol.
 - Backtest slippage and commission assumptions before paper testing.
+- 1-3% average-trade target scoring with drawdown, win-rate, trade-count, and profit-factor checks.
+- Browser learning journal that saves repeated test runs locally and scores evidence over time.
 - Alpha V1 capability brief and in-app self tests to preserve project requirements.
 - Paper order ticket with buy/sell validation.
 - Paper portfolio with equity, exposure, realized P/L, positions, and recent trades saved in browser storage.
 - Dashboard panels for scanner rankings, backtest results, market quotes, signals, and portfolio state.
 
-The current historical data is deterministic sample data generated locally. Replace it with CSV or provider data before treating backtest results as strategy evidence.
+The app uses bundled daily CSV files for the core watchlist and falls back to simulated data only when a symbol is missing enough rows. Refresh the CSVs before treating backtest results as current strategy evidence.
 
 ## Free real-data workflow
 
@@ -53,6 +55,17 @@ For the fastest live workflow, download a CSV named like `AAPL.csv`, open the da
 Bundled watchlist CSVs currently cover `AAPL`, `MSFT`, `NVDA`, `TSLA`, `SPY`, and `QQQ` from 2021-08-02 through 2026-07-31.
 
 The live dashboard includes an Alpha V1 capability brief and self tests so requirements are preserved in the app.
+
+## Paper-test discipline workflow
+
+Use the Discipline Rules panel before paper-money testing:
+
+1. Keep the default 1-3% average completed-trade target unless you have a specific reason to change it.
+2. Run the backtest for one symbol and strategy.
+3. Save the test run only after reviewing drawdown, win rate, profit factor, and completed trade count.
+4. Repeat across symbols and strategies until the Learning Journal has enough qualified runs to show repeatable evidence.
+
+The journal is stored in browser local storage. It is not financial advice and it does not guarantee future returns.
 
 ## Structure
 
