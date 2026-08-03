@@ -173,6 +173,7 @@ function App() {
   const [automationMode, setAutomationMode] = useState("moderate");
   const [dayTradeEnabled, setDayTradeEnabled] = useState(true);
   const [optionsEnabled, setOptionsEnabled] = useState(false);
+  const [beginnerSafeMode, setBeginnerSafeMode] = useState(true);
   const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(false);
   const [marketClock, setMarketClock] = useState(() => getMarketClock());
   const [marketCloseSnapshotSaved, setMarketCloseSnapshotSaved] = useState(false);
@@ -260,33 +261,38 @@ function App() {
     [backtest, currentEvaluation, dataStatus, learningSummary, portfolio, readiness, scanner, strategyComparison]
   );
   const passedTests = selfTests.filter((test) => test.passed).length;
+  const effectiveAutomationMode =
+    beginnerSafeMode && portfolio.totalReturn <= 0 ? "moderate" : automationMode;
+  const beginnerOptionsBlocked = beginnerSafeMode && portfolio.totalReturn <= 0;
+  const effectiveOptionsEnabled = optionsEnabled && !beginnerOptionsBlocked;
+  const effectiveFuturesExtendedHours = allowFuturesExtendedHours && !beginnerSafeMode;
   const automationPlan = useMemo(
     () =>
       evaluateAutomationPlan({
         scanner,
         portfolio,
-        mode: automationMode,
+        mode: effectiveAutomationMode,
         watchlist,
         dayTradeEnabled,
-        optionsEnabled,
+        optionsEnabled: effectiveOptionsEnabled,
         strategyMap,
         automationLog,
         futuresEnabled: true,
         marketClock,
-        allowFuturesExtendedHours,
+        allowFuturesExtendedHours: effectiveFuturesExtendedHours,
         sessionPeakEquity
       }),
     [
       scanner,
       portfolio,
-      automationMode,
+      effectiveAutomationMode,
       watchlist,
       dayTradeEnabled,
-      optionsEnabled,
+      effectiveOptionsEnabled,
       strategyMap,
       automationLog,
       marketClock,
-      allowFuturesExtendedHours,
+      effectiveFuturesExtendedHours,
       sessionPeakEquity
     ]
   );
@@ -367,7 +373,7 @@ function App() {
       return;
     }
 
-    if (automationEnabled && !allowFuturesExtendedHours) {
+    if (automationEnabled && !effectiveFuturesExtendedHours) {
       setAutomationEnabled(false);
       recordAutomation({
         action: "market-closed",
@@ -381,7 +387,7 @@ function App() {
       saveAutomationSnapshot(`Market-close snapshot saved at ${marketClock.label}.`);
       setMarketCloseSnapshotSaved(true);
     }
-  }, [marketClock, automationEnabled, allowFuturesExtendedHours, marketCloseSnapshotSaved]);
+  }, [marketClock, automationEnabled, effectiveFuturesExtendedHours, marketCloseSnapshotSaved]);
 
   useEffect(() => {
     if (!automationEnabled) {
@@ -399,8 +405,8 @@ function App() {
     portfolioState,
     market,
     dayTradeEnabled,
-    optionsEnabled,
-    allowFuturesExtendedHours,
+    effectiveOptionsEnabled,
+    effectiveFuturesExtendedHours,
     marketClock
   ]);
 
@@ -522,8 +528,13 @@ function App() {
       tradeDate: today,
       reason,
       mode: automationMode,
+      effectiveMode: effectiveAutomationMode,
       dayTradeEnabled,
       optionsEnabled,
+      effectiveOptionsEnabled,
+      allowFuturesExtendedHours,
+      effectiveFuturesExtendedHours,
+      beginnerSafeMode,
       watchlist,
       bestCategory: automationPlan.bestCategory,
       bestOptionIdea: automationPlan.bestOptionIdea,
@@ -536,9 +547,10 @@ function App() {
         id: makeId(),
         createdAt: snapshot.createdAt,
         symbol: automationPlan.symbol || snapshot.bestCategory?.category || "AUTO",
-        strategy: `Automation ${automationMode}`,
+        strategy: `Automation ${effectiveAutomationMode}`,
         config: {
           mode: automationMode,
+          effectiveMode: effectiveAutomationMode,
           dayTradeEnabled,
           optionsEnabled,
           watchlist,
@@ -570,15 +582,15 @@ function App() {
       const plan = evaluateAutomationPlan({
         scanner,
         portfolio,
-        mode: automationMode,
+        mode: effectiveAutomationMode,
         watchlist,
         dayTradeEnabled,
-        optionsEnabled,
+        optionsEnabled: effectiveOptionsEnabled,
         strategyMap,
         automationLog,
         futuresEnabled: true,
         marketClock,
-        allowFuturesExtendedHours,
+        allowFuturesExtendedHours: effectiveFuturesExtendedHours,
         sessionPeakEquity
       });
 
@@ -924,6 +936,14 @@ function App() {
             <label className="inline-toggle">
               <input
                 type="checkbox"
+                checked={beginnerSafeMode}
+                onChange={(event) => setBeginnerSafeMode(event.target.checked)}
+              />
+              Beginner Safe Mode
+            </label>
+            <label className="inline-toggle">
+              <input
+                type="checkbox"
                 checked={dayTradeEnabled}
                 onChange={(event) => setDayTradeEnabled(event.target.checked)}
               />
@@ -947,6 +967,13 @@ function App() {
             </label>
           </div>
           <p className="signal-note">
+            Beginner Safe Mode: <strong>{beginnerSafeMode ? "on" : "off"}</strong> ·{" "}
+            {beginnerSafeMode
+              ? "keeps the bot disciplined for a realistic small account: uses moderate evaluation while red, blocks extended-hours futures, and blocks option entries while the session is red."
+              : "advanced risk gates are relaxed; use this only for paper testing."}
+            {beginnerOptionsBlocked && " Options are blocked until the paper session is green."}
+          </p>
+          <p className="signal-note">
             Market clock: <strong>{marketClock.label}</strong> · regular session{" "}
             <strong>{marketClock.isRegularSession ? "open" : "closed"}</strong>
             {marketClock.isRegularSession
@@ -956,7 +983,7 @@ function App() {
           <p className="signal-note">
             Current plan: <strong>{automationPlan.action.toUpperCase()}</strong>{" "}
             {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
-            {automationPlan.reason}
+            {automationPlan.reason} · effective mode <strong>{effectiveAutomationMode}</strong>
           </p>
           <p className="signal-note">
             Cash management: <strong>$3,000 adaptive sizing</strong> · max single trade{" "}
