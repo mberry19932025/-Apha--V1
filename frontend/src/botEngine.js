@@ -947,6 +947,113 @@ export function analyzeLearningJournal(runs = []) {
   };
 }
 
+function daysSinceDate(dateString) {
+  if (!dateString) {
+    return Infinity;
+  }
+
+  const date = new Date(`${dateString}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) {
+    return Infinity;
+  }
+
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  return Math.max(0, Math.floor((today.getTime() - date.getTime()) / DAY_MS));
+}
+
+export function evaluateReadiness({
+  backtest,
+  currentEvaluation,
+  dataStatus = [],
+  learningSummary,
+  portfolio
+} = {}) {
+  const newestDataDate = dataStatus
+    .map((item) => item.lastDate)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  const dataAgeDays = daysSinceDate(newestDataDate);
+  const summary = backtest?.summary || {};
+  const config = backtest?.config || {};
+  const checks = [
+    {
+      id: "real-data",
+      label: "All watchlist symbols use CSV data",
+      passed: dataStatus.length === symbols.length && dataStatus.every((item) => item.source === "csv")
+    },
+    {
+      id: "fresh-data",
+      label: "Market data is fresh enough for paper-test decisions",
+      passed: dataAgeDays <= 7,
+      detail: Number.isFinite(dataAgeDays) ? `${dataAgeDays} days old` : "missing dates"
+    },
+    {
+      id: "costs",
+      label: "Slippage and commission assumptions are included",
+      passed: Number.isFinite(config.slippagePercent) && Number.isFinite(config.commission)
+    },
+    {
+      id: "protective-exits",
+      label: "Stop loss, take profit, trailing stop, and streak stops are configured",
+      passed:
+        Number(config.stopLossPercent) > 0 &&
+        Number(config.takeProfitPercent) > 0 &&
+        Number(config.maxConsecutiveLosses) > 0 &&
+        Number(config.maxConsecutiveWins) > 0
+    },
+    {
+      id: "discipline",
+      label: "Current setup passes discipline score",
+      passed: Number(currentEvaluation?.score || 0) >= 80
+    },
+    {
+      id: "journal-evidence",
+      label: "Learning journal has enough qualified repeated runs",
+      passed: Number(learningSummary?.qualifiedRuns || 0) >= 5 && Number(learningSummary?.totalRuns || 0) >= 10,
+      detail: `${learningSummary?.qualifiedRuns || 0}/${learningSummary?.totalRuns || 0} qualified`
+    },
+    {
+      id: "risk-profile",
+      label: "Risk profile is not aggressive without pattern evidence",
+      passed:
+        config.riskProfile !== "pattern-confirmed" ||
+        Number(summary.patternConfirmedEntries || 0) > 0 ||
+        Number(summary.completedTrades || 0) === 0
+    },
+    {
+      id: "paper-only",
+      label: "Portfolio remains paper-only with no real-money broker attached",
+      passed: portfolio?.mode === "static paper"
+    },
+    {
+      id: "backtest-engine",
+      label: "Dedicated local/pro backtesting engine is connected",
+      passed: false,
+      detail: "missing"
+    },
+    {
+      id: "broker-paper",
+      label: "Broker paper-trading account is connected",
+      passed: false,
+      detail: "missing"
+    }
+  ];
+  const passedChecks = checks.filter((check) => check.passed).length;
+  const score = Math.round((passedChecks / checks.length) * 100);
+
+  return {
+    score,
+    status: score >= 85 ? "ready" : score >= 65 ? "almost" : "not ready",
+    checks,
+    passedChecks,
+    totalChecks: checks.length,
+    newestDataDate,
+    dataAgeDays
+  };
+}
+
 export function createInitialPortfolio() {
   return {
     cash: 100000,

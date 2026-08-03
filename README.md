@@ -16,6 +16,7 @@ This project is intentionally safe by default: it simulates paper trades in the 
 - Browser learning journal that saves repeated test runs locally and scores evidence over time.
 - Capital Guard, Moderate Bullish, and Pattern Confirmed risk profiles.
 - Stop loss, take profit, trailing stop, protected-profit giveback, and consecutive win/loss halt rules.
+- V1 readiness gate that separates usable screening from true paper-test readiness.
 - Alpha V1 capability brief and in-app self tests to preserve project requirements.
 - Paper order ticket with buy/sell validation.
 - Paper portfolio with equity, exposure, realized P/L, positions, and recent trades saved in browser storage.
@@ -71,6 +72,8 @@ Use the Discipline Rules panel before paper-money testing:
 The journal is stored in browser local storage. It is not financial advice and it does not guarantee future returns.
 
 Risk profiles are intentionally capped. Moderate Bullish is still conservative, and Pattern Confirmed only increases sizing when the backtest recognizes trend, breakout, higher-low, and volume confirmation.
+
+The V1 Readiness Gate intentionally keeps the dedicated backtesting engine and broker paper-trading connection marked as missing until those integrations exist. The current static dashboard is a screening and discipline tool, not a final execution engine.
 
 ## Structure
 

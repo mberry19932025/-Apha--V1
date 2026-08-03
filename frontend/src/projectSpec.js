@@ -8,7 +8,8 @@ export const projectCapabilities = [
   "1-3% trade-target discipline scoring",
   "Browser learning journal for repeated paper-test evidence",
   "Moderate bullish and pattern-confirmed risk profiles",
-  "Stop loss, take profit, trailing stop, profit lock, and streak-stop protections"
+  "Stop loss, take profit, trailing stop, profit lock, and streak-stop protections",
+  "V1 readiness gate for data, risk, evidence, broker, and engine gaps"
 ];
 
 export const projectTests = [
@@ -63,6 +64,14 @@ export const projectTests = [
     run: ({ learningSummary }) =>
       Number.isFinite(learningSummary?.totalRuns) &&
       ["early", "building", "strong"].includes(learningSummary?.evidenceLevel)
+  },
+  {
+    id: "readiness-gate",
+    label: "V1 readiness gate tracks paper-test blockers",
+    run: ({ readiness }) =>
+      readiness?.checks?.length >= 10 &&
+      readiness.checks.some((check) => check.id === "backtest-engine" && !check.passed) &&
+      readiness.checks.some((check) => check.id === "broker-paper" && !check.passed)
   },
   {
     id: "scanner-results",

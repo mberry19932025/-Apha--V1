@@ -5,6 +5,7 @@ import {
   buildPortfolio,
   createInitialPortfolio,
   evaluateDiscipline,
+  evaluateReadiness,
   getDataStatus,
   getMarketSnapshot,
   getSignals,
@@ -139,6 +140,17 @@ function App() {
     [backtest, disciplineForm]
   );
   const learningSummary = useMemo(() => analyzeLearningJournal(learningJournal), [learningJournal]);
+  const readiness = useMemo(
+    () =>
+      evaluateReadiness({
+        backtest,
+        currentEvaluation,
+        dataStatus,
+        learningSummary,
+        portfolio
+      }),
+    [backtest, currentEvaluation, dataStatus, learningSummary, portfolio]
+  );
   const strategyComparison = useMemo(
     () =>
       strategies.map((strategy) => {
@@ -164,11 +176,12 @@ function App() {
           dataStatus,
           learningSummary,
           portfolio,
+          readiness,
           scanner,
           strategyComparison
         })
       })),
-    [backtest, currentEvaluation, dataStatus, learningSummary, portfolio, scanner, strategyComparison]
+    [backtest, currentEvaluation, dataStatus, learningSummary, portfolio, readiness, scanner, strategyComparison]
   );
   const passedTests = selfTests.filter((test) => test.passed).length;
 
@@ -1098,6 +1111,51 @@ function App() {
             </p>
           )}
         </article>
+      </section>
+
+      <section className="card readiness-card">
+        <div className="card-header">
+          <h2>V1 Readiness Gate</h2>
+          <div className="result-badges">
+            <span className={`pill ${readiness.status === "ready" ? "buy" : "hold"}`}>
+              {readiness.status}
+            </span>
+            <span className="pill hold">{readiness.score}/100</span>
+          </div>
+        </div>
+        <div className="metrics four">
+          <div>
+            <small>Checks Passed</small>
+            <strong>
+              {readiness.passedChecks}/{readiness.totalChecks}
+            </strong>
+          </div>
+          <div>
+            <small>Newest Data</small>
+            <strong>{readiness.newestDataDate || "-"}</strong>
+          </div>
+          <div>
+            <small>Qualified Runs</small>
+            <strong>{learningSummary.qualifiedRuns}</strong>
+          </div>
+          <div>
+            <small>Mode</small>
+            <strong>{portfolio.mode}</strong>
+          </div>
+        </div>
+        <div className="readiness-list">
+          {readiness.checks.map((check) => (
+            <div className="brief-item" key={check.id}>
+              <span className={check.passed ? "checkmark" : "xmark"}>
+                {check.passed ? "✓" : "!"}
+              </span>
+              <span>
+                {check.label}
+                {check.detail ? <small>{check.detail}</small> : null}
+              </span>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="card data-card">

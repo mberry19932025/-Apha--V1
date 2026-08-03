@@ -406,6 +406,21 @@ button:disabled {
   margin: 14px 0;
 }
 
+.readiness-card {
+  margin-bottom: 18px;
+}
+
+.readiness-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.readiness-list small {
+  display: block;
+  margin-top: 3px;
+}
+
 .form-row,
 .card-header {
   display: grid;
@@ -492,6 +507,7 @@ button:disabled {
   .scanner-grid,
   .backtest-layout,
   .discipline-grid,
+  .readiness-list,
   .summary-strip {
     grid-template-columns: 1fr;
   }
