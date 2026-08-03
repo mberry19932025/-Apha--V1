@@ -242,19 +242,41 @@ function App() {
     setBacktestForm((current) => ({ ...current, symbol }));
   }
 
+  function executePaperOrder(order) {
+    const activeMarket = market.length ? market : getMarketSnapshot();
+    const normalizedOrder = {
+      ...order,
+      quantity: Math.max(1, Number(order.quantity || 1))
+    };
+
+    const nextPortfolioState = placePaperTrade(portfolioState, activeMarket, normalizedOrder);
+    setPortfolioState(nextPortfolioState);
+    const latestTrade = nextPortfolioState.trades.at(-1);
+    setMessage(
+      `${normalizedOrder.side.toUpperCase()} filled: ${latestTrade.quantity} ${latestTrade.symbol} at ${formatMoney(
+        latestTrade.price
+      )}.`
+    );
+  }
+
   function submitTrade(event) {
     event?.preventDefault();
     setMessage("");
 
     try {
-      const nextPortfolioState = placePaperTrade(portfolioState, market, tradeForm);
-      setPortfolioState(nextPortfolioState);
-      const latestTrade = nextPortfolioState.trades.at(-1);
-      setMessage(
-        `${tradeForm.side.toUpperCase()} filled: ${latestTrade.quantity} ${latestTrade.symbol} at ${formatMoney(
-          latestTrade.price
-        )}.`
-      );
+      executePaperOrder(tradeForm);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  function quickTrade(side) {
+    setMessage("");
+
+    try {
+      const order = { symbol: "SPY", side, quantity: 1 };
+      setTradeForm(order);
+      executePaperOrder(order);
     } catch (error) {
       setMessage(error.message);
     }
@@ -414,6 +436,24 @@ function App() {
         <div>
           <small>Learning Score</small>
           <strong>{learningSummary.totalRuns ? `${learningSummary.averageScore}/100` : "0/100"}</strong>
+        </div>
+      </section>
+
+      <section className="card quick-trade-card">
+        <div>
+          <p className="eyebrow">Paper Trade Test</p>
+          <h2>Quick SPY Order</h2>
+          <p className="signal-note">
+            Use this to verify paper trading immediately. It only changes the simulated browser portfolio.
+          </p>
+        </div>
+        <div className="quick-actions">
+          <button type="button" className="buy-button" onClick={() => quickTrade("buy")}>
+            Quick Buy 1 SPY
+          </button>
+          <button type="button" className="secondary" onClick={() => quickTrade("sell")}>
+            Quick Sell 1 SPY
+          </button>
         </div>
       </section>
 
@@ -605,7 +645,7 @@ function App() {
                 />
               </label>
             </div>
-            <button type="button" onClick={submitTrade} disabled={!market.length}>
+            <button type="button" className="buy-button" onClick={submitTrade}>
               Submit Paper Order
             </button>
           </div>
