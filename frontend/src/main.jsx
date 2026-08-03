@@ -585,7 +585,7 @@ function App() {
       if (plan.action === "hold" || plan.action === "market-closed") {
         recordAutomation({ action: "hold", symbol: "-", quantity: 0, reason: plan.reason });
         setMessage(`Automation HOLD: ${plan.reason}`);
-        if (plan.action === "market-closed") {
+        if (plan.action === "market-closed" || plan.profitLock?.secureDayProfit) {
           setAutomationEnabled(false);
           saveAutomationSnapshot(plan.reason);
         }
@@ -636,6 +636,9 @@ function App() {
         });
         setMessage(`Automation SELL OPTION: ${plan.symbol} · ${plan.reason}`);
         saveAutomationSnapshot(plan.reason);
+        if (plan.profitLock?.secureDayProfit) {
+          setAutomationEnabled(false);
+        }
         return;
       }
 
@@ -658,6 +661,9 @@ function App() {
         });
         setMessage(`Automation ${plan.action.toUpperCase()}: ${plan.symbol} · ${plan.reason}`);
         saveAutomationSnapshot(plan.reason);
+        if (plan.profitLock?.secureDayProfit) {
+          setAutomationEnabled(false);
+        }
         return;
       }
 
@@ -666,6 +672,9 @@ function App() {
       recordAutomation({ ...order, reason: plan.reason });
       if (plan.action === "sell" || portfolio.totalReturn >= 0) {
         saveAutomationSnapshot(plan.reason);
+      }
+      if (plan.profitLock?.secureDayProfit) {
+        setAutomationEnabled(false);
       }
     } catch (error) {
       recordAutomation({ action: "error", symbol: "-", quantity: 0, reason: error.message });
@@ -966,6 +975,8 @@ function App() {
               {formatMoney(portfolio.totalReturn)}
             </strong>
             . If profit gives back too much, automation closes risk before new entries.
+            <br />
+            Hard target: once session profit reaches <strong>$100</strong>, automation secures the day and stops.
           </p>
           <p className="signal-note">
             Futures policy: <strong>4-hour evaluation cycle</strong> · max daily loss{" "}
