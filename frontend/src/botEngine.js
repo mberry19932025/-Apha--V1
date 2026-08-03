@@ -710,6 +710,42 @@ export function evaluateFuturesPolicy({
   };
 }
 
+export function getMarketClock(now = new Date()) {
+  const eastern = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(now);
+  const parts = Object.fromEntries(eastern.map((part) => [part.type, part.value]));
+  const weekday = parts.weekday;
+  const hour = Number(parts.hour);
+  const minute = Number(parts.minute);
+  const minutes = hour * 60 + minute;
+  const openMinutes = 9 * 60 + 30;
+  const closeMinutes = 16 * 60;
+  const isWeekday = !["Sat", "Sun"].includes(weekday);
+  const isRegularSession = isWeekday && minutes >= openMinutes && minutes < closeMinutes;
+  const isAfterClose = isWeekday && minutes >= closeMinutes;
+  const minutesUntilClose = isRegularSession ? closeMinutes - minutes : 0;
+  const minutesUntilOpen = isWeekday && minutes < openMinutes ? openMinutes - minutes : null;
+
+  return {
+    timezone: "America/New_York",
+    weekday,
+    hour,
+    minute,
+    minutes,
+    isWeekday,
+    isRegularSession,
+    isAfterClose,
+    minutesUntilClose,
+    minutesUntilOpen,
+    label: `${weekday} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} ET`
+  };
+}
+
 export function evaluateAutomationPlan({
   scanner,
   portfolio,
@@ -719,11 +755,15 @@ export function evaluateAutomationPlan({
   optionsEnabled = true,
   strategyMap = {},
   automationLog = [],
-  futuresEnabled = true
+  futuresEnabled = true,
+  marketClock = getMarketClock(),
+  allowFuturesExtendedHours = false
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
   const adaptiveRisk = getAdaptiveRiskSettings(portfolio, mode);
   const futuresPolicy = evaluateFuturesPolicy({ portfolio, automationLog });
+  const marketClosed = !marketClock.isRegularSession;
+  const futuresAllowedByClock = marketClock.isRegularSession || allowFuturesExtendedHours;
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
   const minBuyScore = mode === "bullish" ? 64 : 70;
@@ -756,6 +796,20 @@ export function evaluateAutomationPlan({
       Number(position.unrealizedPnlPercent || 0) >= 1.25 ||
       Number(position.unrealizedPnlPercent || 0) <= -1.2
   );
+
+  if (marketClosed && !futuresAllowedByClock) {
+    return {
+      action: "market-closed",
+      reason: `Automation stopped: regular market is closed (${marketClock.label}). Save a market-close snapshot.`,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      marketClock
+    };
+  }
 
   if (futuresExit) {
     return {
@@ -828,7 +882,7 @@ export function evaluateAutomationPlan({
   });
 
   if (!buyCandidate) {
-    const futuresCandidate = futuresEnabled && futuresPolicy.canTradeFutures
+    const futuresCandidate = futuresEnabled && futuresAllowedByClock && futuresPolicy.canTradeFutures
       ? (scanner?.results || []).find((result) => {
           const selectedStrategy = strategyMap[result.symbol];
           return (

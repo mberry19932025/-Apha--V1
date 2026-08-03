@@ -11,6 +11,7 @@ import {
   evaluateAutomationPlan,
   evaluateReadiness,
   getDataStatus,
+  getMarketClock,
   getMarketSnapshot,
   getSignals,
   loadBundledData,
@@ -161,6 +162,9 @@ function App() {
   const [automationMode, setAutomationMode] = useState("moderate");
   const [dayTradeEnabled, setDayTradeEnabled] = useState(true);
   const [optionsEnabled, setOptionsEnabled] = useState(true);
+  const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(false);
+  const [marketClock, setMarketClock] = useState(() => getMarketClock());
+  const [marketCloseSnapshotSaved, setMarketCloseSnapshotSaved] = useState(false);
   const [automationLog, setAutomationLog] = useState(() => loadStoredArray(automationLogKey, []));
   const [automationSnapshots, setAutomationSnapshots] = useState(() =>
     loadStoredArray(automationSnapshotsKey, [])
@@ -253,9 +257,22 @@ function App() {
         optionsEnabled,
         strategyMap,
         automationLog,
-        futuresEnabled: true
+        futuresEnabled: true,
+        marketClock,
+        allowFuturesExtendedHours
       }),
-    [scanner, portfolio, automationMode, watchlist, dayTradeEnabled, optionsEnabled, strategyMap, automationLog]
+    [
+      scanner,
+      portfolio,
+      automationMode,
+      watchlist,
+      dayTradeEnabled,
+      optionsEnabled,
+      strategyMap,
+      automationLog,
+      marketClock,
+      allowFuturesExtendedHours
+    ]
   );
 
   useEffect(() => {
@@ -314,6 +331,35 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const timer = setInterval(() => {
+      setMarketClock(getMarketClock());
+    }, 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (marketClock.isRegularSession) {
+      setMarketCloseSnapshotSaved(false);
+      return;
+    }
+
+    if (automationEnabled && !allowFuturesExtendedHours) {
+      setAutomationEnabled(false);
+      recordAutomation({
+        action: "market-closed",
+        symbol: "-",
+        quantity: 0,
+        reason: `Automation stopped at market close (${marketClock.label}).`
+      });
+    }
+
+    if (marketClock.isAfterClose && !marketCloseSnapshotSaved) {
+      saveAutomationSnapshot(`Market-close snapshot saved at ${marketClock.label}.`);
+      setMarketCloseSnapshotSaved(true);
+    }
+  }, [marketClock, automationEnabled, allowFuturesExtendedHours, marketCloseSnapshotSaved]);
+
+  useEffect(() => {
     if (!automationEnabled) {
       return undefined;
     }
@@ -323,7 +369,16 @@ function App() {
     }, 20000);
 
     return () => clearInterval(timer);
-  }, [automationEnabled, automationPlan, portfolioState, market, dayTradeEnabled, optionsEnabled]);
+  }, [
+    automationEnabled,
+    automationPlan,
+    portfolioState,
+    market,
+    dayTradeEnabled,
+    optionsEnabled,
+    allowFuturesExtendedHours,
+    marketClock
+  ]);
 
   function syncSymbol(symbol) {
     setTradeForm((current) => ({ ...current, symbol }));
@@ -497,12 +552,18 @@ function App() {
         optionsEnabled,
         strategyMap,
         automationLog,
-        futuresEnabled: true
+        futuresEnabled: true,
+        marketClock,
+        allowFuturesExtendedHours
       });
 
-      if (plan.action === "hold") {
+      if (plan.action === "hold" || plan.action === "market-closed") {
         recordAutomation({ action: "hold", symbol: "-", quantity: 0, reason: plan.reason });
         setMessage(`Automation HOLD: ${plan.reason}`);
+        if (plan.action === "market-closed") {
+          setAutomationEnabled(false);
+          saveAutomationSnapshot(plan.reason);
+        }
         return;
       }
 
@@ -814,7 +875,22 @@ function App() {
               />
               Include options watch ideas
             </label>
+            <label className="inline-toggle">
+              <input
+                type="checkbox"
+                checked={allowFuturesExtendedHours}
+                onChange={(event) => setAllowFuturesExtendedHours(event.target.checked)}
+              />
+              Allow futures extended-hours paper cycles
+            </label>
           </div>
+          <p className="signal-note">
+            Market clock: <strong>{marketClock.label}</strong> · regular session{" "}
+            <strong>{marketClock.isRegularSession ? "open" : "closed"}</strong>
+            {marketClock.isRegularSession
+              ? ` · ${marketClock.minutesUntilClose} minutes until close`
+              : " · automation stops unless futures extended-hours is enabled"}
+          </p>
           <p className="signal-note">
             Current plan: <strong>{automationPlan.action.toUpperCase()}</strong>{" "}
             {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
