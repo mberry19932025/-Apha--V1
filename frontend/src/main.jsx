@@ -38,6 +38,7 @@ const watchlistKey = "apex-alpha-watchlist";
 const automationLogKey = "apex-alpha-automation-log";
 const automationSnapshotsKey = "apex-alpha-automation-snapshots";
 const sessionPeakEquityKey = "apex-alpha-session-peak-equity";
+const emergencyStopKey = "apex-alpha-emergency-stop";
 
 function formatMoney(value) {
   return new Intl.NumberFormat("en-US", {
@@ -130,6 +131,15 @@ function loadStoredNumber(key, fallback) {
   }
 }
 
+function loadStoredBoolean(key, fallback = false) {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored === null ? fallback : stored === "true";
+  } catch {
+    return fallback;
+  }
+}
+
 function App() {
   const [dataBySymbol, setDataBySymbol] = useState({});
   const [bundledData, setBundledData] = useState({});
@@ -171,6 +181,9 @@ function App() {
   const [learningJournal, setLearningJournal] = useState(loadLearningJournal);
   const [watchlist, setWatchlist] = useState(() => loadStoredArray(watchlistKey, ["SPY", "QQQ"]));
   const [automationEnabled, setAutomationEnabled] = useState(false);
+  const [emergencyStopActive, setEmergencyStopActive] = useState(() =>
+    loadStoredBoolean(emergencyStopKey, false)
+  );
   const [automationMode, setAutomationMode] = useState("moderate");
   const [dayTradeEnabled, setDayTradeEnabled] = useState(true);
   const [optionsEnabled, setOptionsEnabled] = useState(false);
@@ -412,6 +425,13 @@ function App() {
   }, [sessionPeakEquity]);
 
   useEffect(() => {
+    localStorage.setItem(emergencyStopKey, String(emergencyStopActive));
+    if (emergencyStopActive && automationEnabled) {
+      setAutomationEnabled(false);
+    }
+  }, [emergencyStopActive, automationEnabled]);
+
+  useEffect(() => {
     const timer = setInterval(() => {
       setMarket(getMarketSnapshot());
     }, 15000);
@@ -448,7 +468,7 @@ function App() {
   }, [marketClock, automationEnabled, effectiveFuturesExtendedHours, marketCloseSnapshotSaved]);
 
   useEffect(() => {
-    if (!automationEnabled) {
+    if (!automationEnabled || emergencyStopActive) {
       return undefined;
     }
 
@@ -459,6 +479,7 @@ function App() {
     return () => clearInterval(timer);
   }, [
     automationEnabled,
+    emergencyStopActive,
     automationPlan,
     portfolioState,
     market,
@@ -653,6 +674,18 @@ function App() {
       return;
     }
 
+    if (emergencyStopActive) {
+      const reason = "Automation not started: emergency stop is active. Clear emergency stop only when you are ready to paper test again.";
+      recordAutomation({
+        action: "start-blocked",
+        symbol: "-",
+        quantity: 0,
+        reason
+      });
+      setMessage(reason);
+      return;
+    }
+
     if (!marketClock.isRegularSession && !effectiveFuturesExtendedHours) {
       const reason = `Automation not started: regular market is closed (${marketClock.label}). Enable futures extended-hours paper cycles if you intentionally want futures-only testing.`;
       recordAutomation({
@@ -700,10 +733,39 @@ function App() {
     runAutomationCycle();
   }
 
+  function triggerEmergencyStop() {
+    setEmergencyStopActive(true);
+    setAutomationEnabled(false);
+    recordAutomation({
+      action: "emergency-stop",
+      symbol: "-",
+      quantity: 0,
+      reason: "Emergency stop pressed. Automation locked off."
+    });
+    setMessage("Emergency stop active. Automation is locked off. Refreshing the page will keep it stopped.");
+  }
+
+  function clearEmergencyStop() {
+    setEmergencyStopActive(false);
+    recordAutomation({
+      action: "emergency-cleared",
+      symbol: "-",
+      quantity: 0,
+      reason: "Emergency stop cleared manually."
+    });
+    setMessage("Emergency stop cleared. Automation is still stopped until you press Start.");
+  }
+
   function runAutomationCycle() {
     setMessage("");
 
     try {
+      if (emergencyStopActive) {
+        setAutomationEnabled(false);
+        setMessage("Emergency stop active. Automation cycle blocked.");
+        return;
+      }
+
       const plan = evaluateAutomationPlan({
         scanner,
         portfolio,
@@ -1014,6 +1076,25 @@ function App() {
 
       {message && <div className="alert">{message}</div>}
 
+      <section className="alert danger-alert emergency-bar">
+        <span>
+          <strong>{emergencyStopActive ? "Emergency Stop Active" : "Emergency Stop"}</strong>{" "}
+          {emergencyStopActive
+            ? "Automation is locked off and cannot restart until cleared."
+            : "Press this if the bot is losing or the regular Stop button does not respond."}
+        </span>
+        <div className="quick-actions">
+          <button type="button" className="secondary danger" onClick={triggerEmergencyStop}>
+            Emergency Stop
+          </button>
+          {emergencyStopActive && (
+            <button type="button" className="secondary mini" onClick={clearEmergencyStop}>
+              Clear Lock
+            </button>
+          )}
+        </div>
+      </section>
+
       <section className="summary-strip">
         <div>
           <small>Portfolio Equity</small>
@@ -1258,7 +1339,7 @@ function App() {
               className="buy-button"
               onClick={toggleAutomation}
             >
-              {automationEnabled ? "Stop Automation" : "Start Automation"}
+              {emergencyStopActive ? "Emergency Stop Locked" : automationEnabled ? "Stop Automation" : "Start Automation"}
             </button>
             <button type="button" className="secondary" onClick={runAutomationCycle}>
               Run One Cycle Now

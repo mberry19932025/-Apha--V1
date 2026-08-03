@@ -1252,6 +1252,21 @@ export function evaluateAutomationPlan({
     };
   }
 
+  if (adaptiveRisk.returnPercent < 0) {
+    return {
+      action: "hold",
+      reason: `Capital recovery hold: account is red (${round(adaptiveRisk.returnPercent, 2)}%). No new entries until paper equity is back above starting cash.`,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      decisionWindow,
+      dailyTradeLimit
+    };
+  }
+
   if (dailyTradeLimit.reached) {
     return {
       action: "hold",
