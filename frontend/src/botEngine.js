@@ -621,6 +621,45 @@ export function buildStrategyMap(baseOptions = {}, dataBySymbol = {}, watchlist 
   );
 }
 
+export function getAdaptiveRiskSettings(portfolio = {}, mode = "moderate") {
+  const equity = Number(portfolio.equity || portfolio.startingCash || 3000);
+  const startingCash = Number(portfolio.startingCash || 3000);
+  const returnPercent = startingCash ? ((equity - startingCash) / startingCash) * 100 : 0;
+  const drawdownFromStartPercent = startingCash ? Math.max(0, ((startingCash - equity) / startingCash) * 100) : 0;
+  const isSmallAccount = startingCash <= 1500;
+  const baseSingleTradeCashPercent = mode === "bullish" ? 0.24 : 0.16;
+  const baseMaxExposurePercent = mode === "bullish" ? 55 : 32;
+  let riskMultiplier = 1;
+
+  if (isSmallAccount) {
+    riskMultiplier *= 0.68;
+  }
+  if (drawdownFromStartPercent >= 8) {
+    riskMultiplier *= 0.45;
+  } else if (drawdownFromStartPercent >= 4) {
+    riskMultiplier *= 0.65;
+  }
+  if (returnPercent >= 6) {
+    riskMultiplier *= 1.12;
+  } else if (returnPercent >= 3) {
+    riskMultiplier *= 1.06;
+  }
+
+  return {
+    equity: round(equity),
+    startingCash: round(startingCash),
+    returnPercent: round(returnPercent, 2),
+    drawdownFromStartPercent: round(drawdownFromStartPercent, 2),
+    riskMultiplier: round(riskMultiplier, 2),
+    maxSingleTradeCashPercent: round(baseSingleTradeCashPercent * riskMultiplier, 4),
+    maxExposurePercent: round(baseMaxExposurePercent * Math.min(1, riskMultiplier), 2),
+    live1000Equivalent: {
+      maxSingleTradeDollars: round(1000 * baseSingleTradeCashPercent * riskMultiplier),
+      maxTotalExposureDollars: round(1000 * (baseMaxExposurePercent / 100) * Math.min(1, riskMultiplier))
+    }
+  };
+}
+
 export function evaluateAutomationPlan({
   scanner,
   portfolio,
@@ -631,8 +670,9 @@ export function evaluateAutomationPlan({
   strategyMap = {}
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
-  const maxExposurePercent = mode === "bullish" ? 55 : 32;
-  const maxSingleTradeCashPercent = mode === "bullish" ? 0.24 : 0.16;
+  const adaptiveRisk = getAdaptiveRiskSettings(portfolio, mode);
+  const maxExposurePercent = adaptiveRisk.maxExposurePercent;
+  const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
   const minBuyScore = mode === "bullish" ? 64 : 70;
   const positions = new Map((portfolio?.positions || []).map((position) => [position.symbol, position]));
   const categoryRanks = rankAutomationCategories(scanner?.results || [], watchlist);
@@ -669,7 +709,8 @@ export function evaluateAutomationPlan({
       profile,
       bestCategory,
       categoryRanks,
-      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      adaptiveRisk
     };
   }
 
@@ -683,7 +724,8 @@ export function evaluateAutomationPlan({
       profile,
       bestCategory,
       categoryRanks,
-      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      adaptiveRisk
     };
   }
 
@@ -719,7 +761,8 @@ export function evaluateAutomationPlan({
       profile,
       bestCategory,
       categoryRanks,
-      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      adaptiveRisk
     };
   }
 
@@ -730,7 +773,8 @@ export function evaluateAutomationPlan({
       profile,
       bestCategory,
       categoryRanks,
-      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      adaptiveRisk
     };
   }
 
@@ -755,7 +799,8 @@ export function evaluateAutomationPlan({
         profile,
         bestCategory,
         categoryRanks,
-        bestOptionIdea
+        bestOptionIdea,
+        adaptiveRisk
       };
     }
 
@@ -773,13 +818,14 @@ export function evaluateAutomationPlan({
           strategyScore: strategyMap[buyCandidate.symbol]?.score || 0,
           liquidity: buyCandidate.intelligence?.liquidityGrade || "unknown",
           volatility: buyCandidate.intelligence?.volatilityRegime || "unknown",
-          riskFlags: ["Position size too large for $5,000 risk limits."]
+          riskFlags: ["Position size too large for current adaptive risk limits."]
         }
       ],
       profile,
       bestCategory,
       categoryRanks,
-      bestOptionIdea: optionsEnabled ? bestOptionIdea : null
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      adaptiveRisk
     };
   }
 
@@ -793,7 +839,8 @@ export function evaluateAutomationPlan({
     profile,
     bestCategory,
     categoryRanks,
-    bestOptionIdea: optionsEnabled ? bestOptionIdea : null
+    bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+    adaptiveRisk
   };
 }
 
@@ -801,7 +848,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const symbol = symbols.includes(String(options.symbol || "").toUpperCase())
     ? String(options.symbol).toUpperCase()
     : "SPY";
-  const startingCash = clampNumber(options.startingCash, 5000, 1000, 10000000);
+  const startingCash = clampNumber(options.startingCash, 3000, 1000, 10000000);
   const shortWindow = Math.floor(clampNumber(options.shortWindow, 20, 3, 100));
   const longWindow = Math.floor(clampNumber(options.longWindow, 50, shortWindow + 1, 220));
   const lookbackDays = Math.floor(clampNumber(options.lookbackDays, 260, longWindow + 30, 900));
@@ -1186,7 +1233,7 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
         suggestedQuantity: Math.max(
           1,
           Math.floor(
-            (5000 * riskPercent * Math.max(0.35, intelligence.volatilityScore / 100)) /
+            (3000 * riskPercent * Math.max(0.35, intelligence.volatilityScore / 100)) /
               (quote?.price || candles[lastIndex].close)
           )
         )
@@ -1442,8 +1489,8 @@ export function evaluateReadiness({
 
 export function createInitialPortfolio() {
   return {
-    cash: 5000,
-    startingCash: 5000,
+    cash: 3000,
+    startingCash: 3000,
     realizedPnl: 0,
     trades: [],
     positions: {},

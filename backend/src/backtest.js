@@ -4,7 +4,7 @@ import { readCsvCandles } from "./data.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULTS = {
   symbol: "SPY",
-  startingCash: 5000,
+  startingCash: 3000,
   shortWindow: 20,
   longWindow: 50,
   lookbackDays: 260,

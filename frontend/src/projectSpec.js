@@ -81,6 +81,6 @@ export const projectTests = [
   {
     id: "paper-mode",
     label: "Paper portfolio starts with safe simulated cash",
-    run: ({ portfolio }) => portfolio.mode === "static paper" && portfolio.startingCash === 5000
+    run: ({ portfolio }) => portfolio.mode === "static paper" && portfolio.startingCash === 3000
   }
 ];
