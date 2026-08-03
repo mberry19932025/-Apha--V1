@@ -177,6 +177,7 @@ function App() {
   const [beginnerSafeMode, setBeginnerSafeMode] = useState(true);
   const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(false);
   const [decisionWindowMinutes, setDecisionWindowMinutes] = useState(5);
+  const [maxTradesPerDay, setMaxTradesPerDay] = useState(3);
   const [marketClock, setMarketClock] = useState(() => getMarketClock());
   const [marketCloseSnapshotSaved, setMarketCloseSnapshotSaved] = useState(false);
   const [sessionPeakEquity, setSessionPeakEquity] = useState(() =>
@@ -223,6 +224,51 @@ function App() {
     () => buildPaperLearningMemory(portfolioState.trades || []),
     [portfolioState.trades]
   );
+  const dailyReport = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const todayTrades = (portfolioState.trades || []).filter((trade) => String(trade.createdAt || "").slice(0, 10) === today);
+    const closedTrades = todayTrades.filter((trade) => Number(trade.realizedPnl || 0) !== 0);
+    const entryTrades = todayTrades.filter((trade) => ["buy"].includes(trade.side));
+    const realizedPnl = closedTrades.reduce((sum, trade) => sum + Number(trade.realizedPnl || 0), 0);
+    const wins = closedTrades.filter((trade) => Number(trade.realizedPnl || 0) > 0);
+    const losses = closedTrades.filter((trade) => Number(trade.realizedPnl || 0) < 0);
+    const sortedByPnl = [...closedTrades].sort((a, b) => Number(b.realizedPnl || 0) - Number(a.realizedPnl || 0));
+    const strategyStats = Object.values(
+      closedTrades.reduce((stats, trade) => {
+        const key = trade.strategy || "Unknown";
+        stats[key] ||= { strategy: key, trades: 0, pnl: 0, wins: 0, losses: 0 };
+        stats[key].trades += 1;
+        stats[key].pnl += Number(trade.realizedPnl || 0);
+        if (Number(trade.realizedPnl || 0) > 0) stats[key].wins += 1;
+        if (Number(trade.realizedPnl || 0) < 0) stats[key].losses += 1;
+        return stats;
+      }, {})
+    ).sort((a, b) => b.pnl - a.pnl);
+
+    return {
+      tradeDate: today,
+      startingBalance: portfolio.startingCash,
+      endingBalance: portfolio.equity,
+      netChange: portfolio.totalReturn,
+      netChangePercent: portfolio.totalReturnPercent,
+      totalTrades: todayTrades.length,
+      entries: entryTrades.length,
+      closedTrades: closedTrades.length,
+      realizedPnl,
+      winRate: closedTrades.length ? (wins.length / closedTrades.length) * 100 : 0,
+      bestTrade: sortedByPnl[0] || null,
+      worstTrade: sortedByPnl.at(-1) || null,
+      strategyStats,
+      lesson:
+        losses.length >= 2
+          ? "Loss cluster detected: reduce size, wait for cleaner windows, and avoid repeating the weakest setup."
+          : wins.length > losses.length && wins.length > 0
+            ? "Positive closed-trade edge today: keep the winning setup, but stop after target."
+            : closedTrades.length
+              ? "Mixed results: keep collecting evidence before increasing risk."
+              : "No closed trades yet: report will update after exits."
+    };
+  }, [portfolioState.trades, portfolio]);
   const readiness = useMemo(
     () =>
       evaluateReadiness({
@@ -288,6 +334,7 @@ function App() {
         marketClock,
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
         decisionWindowMinutes,
+        maxTradesPerDay,
         sessionPeakEquity
       }),
     [
@@ -303,6 +350,7 @@ function App() {
       marketClock,
       effectiveFuturesExtendedHours,
       decisionWindowMinutes,
+      maxTradesPerDay,
       sessionPeakEquity
     ]
   );
@@ -548,6 +596,7 @@ function App() {
       effectiveFuturesExtendedHours,
       beginnerSafeMode,
       decisionWindowMinutes,
+      maxTradesPerDay,
       paperLearningMemory,
       watchlist,
       bestCategory: automationPlan.bestCategory,
@@ -607,6 +656,7 @@ function App() {
         marketClock,
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
         decisionWindowMinutes,
+        maxTradesPerDay,
         sessionPeakEquity
       });
 
@@ -630,7 +680,13 @@ function App() {
           side: "buy",
           quantity: 1,
           strategy: selectedStrategy?.strategy?.name || "Best available",
-          strategyScore: selectedStrategy?.score || null
+          strategyScore: selectedStrategy?.score || null,
+          reason: plan.reason,
+          scannerScore: plan.bestOptionIdea?.score || null,
+          learningAdjustment: plan.bestOptionIdea?.learningAdjustment || 0,
+          decisionWindowMinutes,
+          marketClockLabel: marketClock.label,
+          mode: effectiveAutomationMode
         });
         setPortfolioState(nextPortfolioState);
         recordAutomation({
@@ -657,7 +713,11 @@ function App() {
           side: "sell",
           quantity: plan.quantity,
           strategy: "Profit lock",
-          strategyScore: null
+          strategyScore: null,
+          reason: plan.reason,
+          decisionWindowMinutes,
+          marketClockLabel: marketClock.label,
+          mode: effectiveAutomationMode
         });
         setPortfolioState(nextPortfolioState);
         recordAutomation({
@@ -682,7 +742,13 @@ function App() {
           side,
           quantity: plan.quantity,
           strategy: selectedStrategy?.strategy?.name || "Best available",
-          strategyScore: selectedStrategy?.score || null
+          strategyScore: selectedStrategy?.score || null,
+          reason: plan.reason,
+          scannerScore: scanner?.results?.find((result) => result.symbol === plan.symbol)?.score || null,
+          learningAdjustment: scanner?.results?.find((result) => result.symbol === plan.symbol)?.learningAdjustment || 0,
+          decisionWindowMinutes,
+          marketClockLabel: marketClock.label,
+          mode: effectiveAutomationMode
         });
         setPortfolioState(nextPortfolioState);
         recordAutomation({
@@ -699,7 +765,18 @@ function App() {
         return;
       }
 
-      const order = { symbol: plan.symbol, side: plan.action, quantity: plan.quantity };
+      const planSignal = scanner?.results?.find((result) => result.symbol === plan.symbol);
+      const order = {
+        symbol: plan.symbol,
+        side: plan.action,
+        quantity: plan.quantity,
+        reason: plan.reason,
+        scannerScore: planSignal?.score || null,
+        learningAdjustment: planSignal?.learningAdjustment || 0,
+        decisionWindowMinutes,
+        marketClockLabel: marketClock.label,
+        mode: effectiveAutomationMode
+      };
       executePaperOrder(order);
       recordAutomation({ ...order, reason: plan.reason });
       if (plan.action === "sell" || portfolio.totalReturn >= 0) {
@@ -962,6 +1039,17 @@ function App() {
                 <option value={15}>15 minutes selective</option>
               </select>
             </label>
+            <label>
+              Max Entries Today
+              <select
+                value={maxTradesPerDay}
+                onChange={(event) => setMaxTradesPerDay(Number(event.target.value))}
+              >
+                <option value={3}>3 beginner</option>
+                <option value={5}>5 moderate</option>
+                <option value={8}>8 paper test</option>
+              </select>
+            </label>
           </div>
           <div className="toggle-row">
             <label className="inline-toggle">
@@ -1025,6 +1113,14 @@ function App() {
               !automationPlan.decisionWindow?.lossCooldownActive &&
               ` · next entry window in about ${automationPlan.decisionWindow?.minutesUntilNextWindow ?? decisionWindowMinutes} minute(s)`}
             . Exits, profit locks, and kill switch still run immediately.
+          </p>
+          <p className="signal-note">
+            Daily trade limit:{" "}
+            <strong>
+              {automationPlan.dailyTradeLimit?.todayEntryCount ?? dailyReport.entries}/
+              {automationPlan.dailyTradeLimit?.maxTradesPerDay ?? maxTradesPerDay}
+            </strong>{" "}
+            entries used. New entries stop when this limit is reached; exits still work.
           </p>
           <p className="signal-note">
             Paper learning: <strong>{paperLearningMemory.closedTrades}</strong> closed result
@@ -1220,6 +1316,73 @@ function App() {
               </p>
             )}
           </div>
+        </article>
+
+        <article className="card">
+          <div className="card-header">
+            <h2>Daily Report Card</h2>
+            <span className={`pill ${dailyReport.netChange >= 0 ? "buy" : "sell"}`}>
+              {dailyReport.netChange >= 0 ? "green" : "red"}
+            </span>
+          </div>
+          <div className="metric-grid compact">
+            <div>
+              <small>Start</small>
+              <strong>{formatMoney(dailyReport.startingBalance)}</strong>
+            </div>
+            <div>
+              <small>Now</small>
+              <strong>{formatMoney(dailyReport.endingBalance)}</strong>
+            </div>
+            <div>
+              <small>Net</small>
+              <strong className={dailyReport.netChange >= 0 ? "gain" : "loss"}>
+                {formatMoney(dailyReport.netChange)} · {formatPercent(dailyReport.netChangePercent)}
+              </strong>
+            </div>
+            <div>
+              <small>Win Rate</small>
+              <strong>{formatPercent(dailyReport.winRate)}</strong>
+            </div>
+          </div>
+          <p className="signal-note">
+            Entries {dailyReport.entries}/{maxTradesPerDay} · closed trades {dailyReport.closedTrades} · realized P/L{" "}
+            <strong className={dailyReport.realizedPnl >= 0 ? "gain" : "loss"}>
+              {formatMoney(dailyReport.realizedPnl)}
+            </strong>
+            . Lesson: {dailyReport.lesson}
+          </p>
+          <p className="signal-note">
+            Best:{" "}
+            <strong>
+              {dailyReport.bestTrade
+                ? `${dailyReport.bestTrade.symbol} ${formatMoney(dailyReport.bestTrade.realizedPnl)}`
+                : "n/a"}
+            </strong>{" "}
+            · Worst:{" "}
+            <strong>
+              {dailyReport.worstTrade
+                ? `${dailyReport.worstTrade.symbol} ${formatMoney(dailyReport.worstTrade.realizedPnl)}`
+                : "n/a"}
+            </strong>
+          </p>
+          {dailyReport.strategyStats.length ? (
+            <div className="brief-list">
+              {dailyReport.strategyStats.slice(0, 3).map((stat) => (
+                <div className="brief-item" key={stat.strategy}>
+                  <span className={`pill ${stat.pnl >= 0 ? "buy" : "sell"}`}>
+                    {stat.trades}
+                  </span>
+                  <span>
+                    <strong>{stat.strategy}</strong>
+                    <small>
+                      P/L {formatMoney(stat.pnl)} · wins {stat.wins} · losses {stat.losses}
+                    </small>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </article>
       </section>
 
@@ -2431,6 +2594,7 @@ function App() {
                 <th>Qty</th>
                 <th>Gross</th>
                 <th>Strategy</th>
+                <th>Replay</th>
               </tr>
             </thead>
             <tbody>
@@ -2445,11 +2609,18 @@ function App() {
                     <td>{trade.quantity}</td>
                     <td>{formatMoney(trade.gross)}</td>
                     <td>{trade.strategy || "-"}</td>
+                    <td>
+                      <small>
+                        {trade.reason || "No reason saved"}{" "}
+                        {trade.marketClockLabel ? `· ${trade.marketClockLabel}` : ""}
+                        {trade.decisionWindowMinutes ? ` · ${trade.decisionWindowMinutes}m window` : ""}
+                      </small>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="6">No paper trades yet.</td>
+                  <td colSpan="7">No paper trades yet.</td>
                 </tr>
               )}
             </tbody>

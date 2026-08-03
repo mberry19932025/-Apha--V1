@@ -915,6 +915,7 @@ export function evaluateAutomationPlan({
   marketClock = getMarketClock(),
   allowFuturesExtendedHours = false,
   decisionWindowMinutes = 5,
+  maxTradesPerDay = 3,
   sessionPeakEquity = portfolio?.equity
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
@@ -928,6 +929,17 @@ export function evaluateAutomationPlan({
   });
   const marketClosed = !marketClock.isRegularSession;
   const futuresAllowedByClock = marketClock.isRegularSession || allowFuturesExtendedHours;
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const entryActions = ["buy", "buy-option", "buy-future"];
+  const todayEntryCount = (automationLog || []).filter(
+    (entry) => entryActions.includes(entry.action) && String(entry.createdAt || "").slice(0, 10) === todayKey
+  ).length;
+  const dailyTradeLimit = {
+    maxTradesPerDay: Math.max(1, Math.min(20, Number(maxTradesPerDay || 3))),
+    todayEntryCount,
+    remainingEntries: Math.max(0, Math.max(1, Math.min(20, Number(maxTradesPerDay || 3))) - todayEntryCount),
+    reached: todayEntryCount >= Math.max(1, Math.min(20, Number(maxTradesPerDay || 3)))
+  };
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
   const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 70 : 76;
@@ -1240,6 +1252,21 @@ export function evaluateAutomationPlan({
     };
   }
 
+  if (dailyTradeLimit.reached) {
+    return {
+      action: "hold",
+      reason: `Daily trade limit reached: ${dailyTradeLimit.todayEntryCount}/${dailyTradeLimit.maxTradesPerDay} automation entries used. No more new entries today.`,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      decisionWindow,
+      dailyTradeLimit
+    };
+  }
+
   if (!decisionWindow.canOpenNewTrade) {
     const reason = decisionWindow.lossCooldownActive
       ? `Decision window hold: last closed paper trade was a loss. Cooling down for ${decisionWindow.lossCooldownMinutes} minutes before any new entry.`
@@ -1255,7 +1282,8 @@ export function evaluateAutomationPlan({
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
       adaptiveRisk,
-      decisionWindow
+      decisionWindow,
+      dailyTradeLimit
     };
   }
 
@@ -1307,7 +1335,8 @@ export function evaluateAutomationPlan({
         bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
         futuresPolicy,
         adaptiveRisk,
-        decisionWindow
+        decisionWindow,
+        dailyTradeLimit
       };
     }
 
@@ -1331,7 +1360,8 @@ export function evaluateAutomationPlan({
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
       adaptiveRisk,
-      decisionWindow
+      decisionWindow,
+      dailyTradeLimit
     };
   }
 
@@ -1345,7 +1375,8 @@ export function evaluateAutomationPlan({
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
       adaptiveRisk,
-      decisionWindow
+      decisionWindow,
+      dailyTradeLimit
     };
   }
 
@@ -1374,7 +1405,8 @@ export function evaluateAutomationPlan({
         bestOptionIdea,
         futuresPolicy,
         adaptiveRisk,
-        decisionWindow
+        decisionWindow,
+        dailyTradeLimit
       };
     }
 
@@ -1402,7 +1434,8 @@ export function evaluateAutomationPlan({
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
       adaptiveRisk,
-      decisionWindow
+      decisionWindow,
+      dailyTradeLimit
     };
   }
 
@@ -1419,7 +1452,8 @@ export function evaluateAutomationPlan({
     bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
     futuresPolicy,
     adaptiveRisk,
-    decisionWindow
+    decisionWindow,
+    dailyTradeLimit
   };
 }
 
@@ -2242,6 +2276,12 @@ export function placePaperTrade(state, market, order) {
     realizedPnl: round(realizedPnl),
     strategy: order.strategy || "Manual",
     strategyScore: order.strategyScore || null,
+    reason: order.reason || "Manual paper order",
+    scannerScore: order.scannerScore || null,
+    learningAdjustment: order.learningAdjustment || 0,
+    decisionWindowMinutes: order.decisionWindowMinutes || null,
+    marketClockLabel: order.marketClockLabel || null,
+    mode: order.mode || null,
     createdAt: new Date().toISOString()
   });
 
@@ -2334,6 +2374,12 @@ export function placePaperOptionTrade(state, optionIdea, order = {}) {
     realizedPnl: round(realizedPnl),
     strategy: order.strategy || "Manual",
     strategyScore: order.strategyScore || null,
+    reason: order.reason || "Manual paper option order",
+    scannerScore: order.scannerScore || optionIdea.score || null,
+    learningAdjustment: order.learningAdjustment ?? optionIdea.learningAdjustment ?? 0,
+    decisionWindowMinutes: order.decisionWindowMinutes || null,
+    marketClockLabel: order.marketClockLabel || null,
+    mode: order.mode || null,
     description: `${optionIdea.underlying} ${optionIdea.strike} ${optionIdea.contractType.toUpperCase()} ${optionIdea.expiry}`,
     createdAt: new Date().toISOString()
   });
@@ -2426,6 +2472,12 @@ export function placePaperFuturesTrade(state, market, order = {}) {
     realizedPnl: round(realizedPnl),
     strategy: order.strategy || "Manual",
     strategyScore: order.strategyScore || null,
+    reason: order.reason || "Manual paper futures order",
+    scannerScore: order.scannerScore || null,
+    learningAdjustment: order.learningAdjustment || 0,
+    decisionWindowMinutes: order.decisionWindowMinutes || null,
+    marketClockLabel: order.marketClockLabel || null,
+    mode: order.mode || null,
     description: `${symbol} ${contract.name}`,
     createdAt: new Date().toISOString()
   });
