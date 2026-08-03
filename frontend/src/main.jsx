@@ -161,7 +161,7 @@ function App() {
   const [automationEnabled, setAutomationEnabled] = useState(false);
   const [automationMode, setAutomationMode] = useState("moderate");
   const [dayTradeEnabled, setDayTradeEnabled] = useState(true);
-  const [optionsEnabled, setOptionsEnabled] = useState(true);
+  const [optionsEnabled, setOptionsEnabled] = useState(false);
   const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(false);
   const [marketClock, setMarketClock] = useState(() => getMarketClock());
   const [marketCloseSnapshotSaved, setMarketCloseSnapshotSaved] = useState(false);
@@ -902,6 +902,11 @@ function App() {
             {formatPercent(automationPlan.adaptiveRisk?.maxExposurePercent)} · live $1k equivalent risk{" "}
             {formatMoney(automationPlan.adaptiveRisk?.live1000Equivalent?.maxSingleTradeDollars)} per trade.
           </p>
+          {automationPlan.adaptiveRisk?.returnPercent < 0 && (
+            <p className="signal-note loss">
+              Loss mode active: new entries require stronger evidence, size is reduced, and options fallback is disabled.
+            </p>
+          )}
           <p className="signal-note">
             Futures policy: <strong>4-hour evaluation cycle</strong> · max daily loss{" "}
             {formatPercent(automationPlan.futuresPolicy?.maxDailyLossPercent)} · profit protect starts at{" "}

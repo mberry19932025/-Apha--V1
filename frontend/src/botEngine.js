@@ -634,12 +634,15 @@ export function getAdaptiveRiskSettings(portfolio = {}, mode = "moderate") {
   const returnPercent = startingCash ? ((equity - startingCash) / startingCash) * 100 : 0;
   const drawdownFromStartPercent = startingCash ? Math.max(0, ((startingCash - equity) / startingCash) * 100) : 0;
   const isSmallAccount = startingCash <= 1500;
-  const baseSingleTradeCashPercent = mode === "bullish" ? 0.24 : 0.16;
-  const baseMaxExposurePercent = mode === "bullish" ? 55 : 32;
+  const baseSingleTradeCashPercent = mode === "bullish" ? 0.18 : 0.1;
+  const baseMaxExposurePercent = mode === "bullish" ? 38 : 22;
   let riskMultiplier = 1;
 
   if (isSmallAccount) {
     riskMultiplier *= 0.68;
+  }
+  if (returnPercent < 0) {
+    riskMultiplier *= 0.55;
   }
   if (drawdownFromStartPercent >= 8) {
     riskMultiplier *= 0.45;
@@ -766,7 +769,7 @@ export function evaluateAutomationPlan({
   const futuresAllowedByClock = marketClock.isRegularSession || allowFuturesExtendedHours;
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
-  const minBuyScore = mode === "bullish" ? 64 : 70;
+  const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 70 : 76;
   const positions = new Map((portfolio?.positions || []).map((position) => [position.symbol, position]));
   const categoryRanks = rankAutomationCategories(scanner?.results || [], watchlist);
   const bestCategory = categoryRanks[0] || null;
@@ -782,7 +785,7 @@ export function evaluateAutomationPlan({
         const pnlPercent = Number(position.unrealizedPnlPercent || 0);
         return (
           allowedSymbols.has(position.symbol) &&
-          (pnlPercent >= (mode === "bullish" ? 0.6 : 0.35) || pnlPercent <= -0.55)
+          (pnlPercent >= (mode === "bullish" ? 0.45 : 0.25) || pnlPercent <= -0.35)
         );
       })
     : null;
@@ -873,7 +876,7 @@ export function evaluateAutomationPlan({
     return (
       result.action === "buy" &&
       result.score >= minBuyScore &&
-      strategyScore >= (mode === "bullish" ? 58 : 64) &&
+      strategyScore >= (adaptiveRisk.returnPercent < 0 ? 72 : mode === "bullish" ? 64 : 68) &&
       !positions.has(result.symbol) &&
       result.intelligence?.liquidityGrade !== "avoid" &&
       result.intelligence?.volatilityRegime !== "extreme" &&
@@ -882,7 +885,7 @@ export function evaluateAutomationPlan({
   });
 
   if (!buyCandidate) {
-    const futuresCandidate = futuresEnabled && futuresAllowedByClock && futuresPolicy.canTradeFutures
+    const futuresCandidate = futuresEnabled && futuresAllowedByClock && futuresPolicy.canTradeFutures && adaptiveRisk.returnPercent >= 0
       ? (scanner?.results || []).find((result) => {
           const selectedStrategy = strategyMap[result.symbol];
           return (
@@ -950,8 +953,9 @@ export function evaluateAutomationPlan({
   const quantity = Math.floor(maxTradeCash / Number(buyCandidate.price || 1));
 
   if (quantity < 1) {
-    const optionFallback =
+      const optionFallback =
       optionsEnabled &&
+      adaptiveRisk.returnPercent >= 0 &&
       bestOptionIdea &&
       bestOptionIdea.stance !== "hold" &&
       bestOptionIdea.notionalCost <= Math.max(50, maxTradeCash);
