@@ -196,23 +196,22 @@ function App() {
 
   useEffect(() => {
     async function init() {
-      const loadedBundledData = await loadBundledData();
-      const mergedData = { ...loadedBundledData, ...uploadedData };
-      const config = {
-        ...backtestForm,
-        riskPercent: Number(backtestForm.riskPercent) / 100
-      };
-      setBundledData(loadedBundledData);
-      setDataBySymbol(mergedData);
-      setBacktest(runBacktest(config, mergedData));
-      setScanner(
-        scanMarket(
-          config,
-          mergedData,
-          market
-        )
-      );
-      setLoading(false);
+      try {
+        const loadedBundledData = await loadBundledData();
+        const mergedData = { ...loadedBundledData, ...uploadedData };
+        const config = {
+          ...backtestForm,
+          riskPercent: Number(backtestForm.riskPercent) / 100
+        };
+        setBundledData(loadedBundledData);
+        setDataBySymbol(mergedData);
+        setBacktest(runBacktest(config, mergedData));
+        setScanner(scanMarket(config, mergedData, market));
+      } catch (error) {
+        setMessage(`Loaded paper trading mode, but historical data failed: ${error.message}`);
+      } finally {
+        setLoading(false);
+      }
     }
 
     init();
@@ -600,7 +599,7 @@ function App() {
                 />
               </label>
             </div>
-            <button type="submit" disabled={loading}>
+            <button type="submit" disabled={!market.length}>
               Submit Paper Order
             </button>
           </form>

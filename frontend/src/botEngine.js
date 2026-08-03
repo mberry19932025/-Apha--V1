@@ -1140,7 +1140,10 @@ export function placePaperTrade(state, market, order) {
     throw new Error("Quantity must be greater than zero.");
   }
 
-  const next = structuredClone(state);
+  const next =
+    typeof structuredClone === "function"
+      ? structuredClone(state)
+      : JSON.parse(JSON.stringify(state));
   const gross = quote.price * quantity;
   const position = next.positions[symbol] || { quantity: 0, averagePrice: 0 };
   let realizedPnl = 0;
@@ -1173,7 +1176,9 @@ export function placePaperTrade(state, market, order) {
   }
 
   next.trades.push({
-    id: crypto.randomUUID(),
+    id:
+      crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     symbol,
     side,
     quantity,
