@@ -176,6 +176,7 @@ function App() {
   const [optionsEnabled, setOptionsEnabled] = useState(false);
   const [beginnerSafeMode, setBeginnerSafeMode] = useState(true);
   const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(false);
+  const [decisionWindowMinutes, setDecisionWindowMinutes] = useState(5);
   const [marketClock, setMarketClock] = useState(() => getMarketClock());
   const [marketCloseSnapshotSaved, setMarketCloseSnapshotSaved] = useState(false);
   const [sessionPeakEquity, setSessionPeakEquity] = useState(() =>
@@ -286,6 +287,7 @@ function App() {
         futuresEnabled: true,
         marketClock,
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
+        decisionWindowMinutes,
         sessionPeakEquity
       }),
     [
@@ -300,6 +302,7 @@ function App() {
       paperLearningMemory,
       marketClock,
       effectiveFuturesExtendedHours,
+      decisionWindowMinutes,
       sessionPeakEquity
     ]
   );
@@ -415,6 +418,7 @@ function App() {
     effectiveOptionsEnabled,
     effectiveFuturesExtendedHours,
     paperLearningMemory,
+    decisionWindowMinutes,
     marketClock
   ]);
 
@@ -543,6 +547,7 @@ function App() {
       allowFuturesExtendedHours,
       effectiveFuturesExtendedHours,
       beginnerSafeMode,
+      decisionWindowMinutes,
       paperLearningMemory,
       watchlist,
       bestCategory: automationPlan.bestCategory,
@@ -601,6 +606,7 @@ function App() {
         futuresEnabled: true,
         marketClock,
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
+        decisionWindowMinutes,
         sessionPeakEquity
       });
 
@@ -945,6 +951,17 @@ function App() {
               Watched Symbols
               <input value={watchlist.join(", ")} readOnly />
             </label>
+            <label>
+              Entry Decision Window
+              <select
+                value={decisionWindowMinutes}
+                onChange={(event) => setDecisionWindowMinutes(Number(event.target.value))}
+              >
+                <option value={1}>1 minute test</option>
+                <option value={5}>5 minutes disciplined</option>
+                <option value={15}>15 minutes selective</option>
+              </select>
+            </label>
           </div>
           <div className="toggle-row">
             <label className="inline-toggle">
@@ -998,6 +1015,16 @@ function App() {
             Current plan: <strong>{automationPlan.action.toUpperCase()}</strong>{" "}
             {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
             {automationPlan.reason} · effective mode <strong>{effectiveAutomationMode}</strong>
+          </p>
+          <p className="signal-note">
+            Decision window: <strong>{decisionWindowMinutes} minute(s)</strong> · new entries{" "}
+            <strong>{automationPlan.decisionWindow?.canOpenNewTrade ? "allowed now" : "waiting"}</strong>
+            {automationPlan.decisionWindow?.lossCooldownActive &&
+              ` · loss cooldown active (${automationPlan.decisionWindow.lossCooldownMinutes} minutes)`}
+            {!automationPlan.decisionWindow?.canOpenNewTrade &&
+              !automationPlan.decisionWindow?.lossCooldownActive &&
+              ` · next entry window in about ${automationPlan.decisionWindow?.minutesUntilNextWindow ?? decisionWindowMinutes} minute(s)`}
+            . Exits, profit locks, and kill switch still run immediately.
           </p>
           <p className="signal-note">
             Paper learning: <strong>{paperLearningMemory.closedTrades}</strong> closed result

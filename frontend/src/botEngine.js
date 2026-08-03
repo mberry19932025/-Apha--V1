@@ -832,12 +832,14 @@ export function getMarketClock(now = new Date()) {
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false
   }).formatToParts(now);
   const parts = Object.fromEntries(eastern.map((part) => [part.type, part.value]));
   const weekday = parts.weekday;
   const hour = Number(parts.hour);
   const minute = Number(parts.minute);
+  const second = Number(parts.second || 0);
   const minutes = hour * 60 + minute;
   const openMinutes = 9 * 60 + 30;
   const closeMinutes = 16 * 60;
@@ -852,6 +854,7 @@ export function getMarketClock(now = new Date()) {
     weekday,
     hour,
     minute,
+    second,
     minutes,
     isWeekday,
     isRegularSession,
@@ -859,6 +862,42 @@ export function getMarketClock(now = new Date()) {
     minutesUntilClose,
     minutesUntilOpen,
     label: `${weekday} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} ET`
+  };
+}
+
+export function getDecisionWindowStatus({
+  marketClock = getMarketClock(),
+  windowMinutes = 5,
+  automationLog = [],
+  portfolio = {},
+  now = new Date()
+} = {}) {
+  const safeWindowMinutes = Math.max(1, Math.min(15, Number(windowMinutes || 5)));
+  const minute = Number(marketClock.minute || 0);
+  const second = Number(marketClock.second || 0);
+  const isWindowOpen = minute % safeWindowMinutes === 0 && second < 45;
+  const minutesUntilNextWindow = isWindowOpen ? 0 : safeWindowMinutes - (minute % safeWindowMinutes);
+  const newEntryActions = ["buy", "buy-option", "buy-future"];
+  const lastEntry = (automationLog || []).find((entry) => newEntryActions.includes(entry.action));
+  const lastEntryTime = lastEntry ? new Date(lastEntry.createdAt).getTime() : 0;
+  const minutesSinceEntry = lastEntryTime ? (now.getTime() - lastEntryTime) / (60 * 1000) : Infinity;
+  const entryCooldownActive = Number.isFinite(minutesSinceEntry) && minutesSinceEntry < safeWindowMinutes;
+  const lastClosedLoss = (portfolio?.trades || []).find((trade) => Number(trade.realizedPnl || 0) < 0);
+  const lastLossTime = lastClosedLoss ? new Date(lastClosedLoss.createdAt).getTime() : 0;
+  const minutesSinceLoss = lastLossTime ? (now.getTime() - lastLossTime) / (60 * 1000) : Infinity;
+  const lossCooldownMinutes = 10;
+  const lossCooldownActive = Number.isFinite(minutesSinceLoss) && minutesSinceLoss < lossCooldownMinutes;
+
+  return {
+    windowMinutes: safeWindowMinutes,
+    isWindowOpen,
+    minutesUntilNextWindow,
+    entryCooldownActive,
+    minutesSinceEntry: Number.isFinite(minutesSinceEntry) ? round(minutesSinceEntry, 1) : null,
+    lossCooldownActive,
+    lossCooldownMinutes,
+    minutesSinceLoss: Number.isFinite(minutesSinceLoss) ? round(minutesSinceLoss, 1) : null,
+    canOpenNewTrade: isWindowOpen && !entryCooldownActive && !lossCooldownActive
   };
 }
 
@@ -875,11 +914,18 @@ export function evaluateAutomationPlan({
   futuresEnabled = true,
   marketClock = getMarketClock(),
   allowFuturesExtendedHours = false,
+  decisionWindowMinutes = 5,
   sessionPeakEquity = portfolio?.equity
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
   const adaptiveRisk = getAdaptiveRiskSettings(portfolio, mode);
   const futuresPolicy = evaluateFuturesPolicy({ portfolio, automationLog });
+  const decisionWindow = getDecisionWindowStatus({
+    marketClock,
+    windowMinutes: decisionWindowMinutes,
+    automationLog,
+    portfolio
+  });
   const marketClosed = !marketClock.isRegularSession;
   const futuresAllowedByClock = marketClock.isRegularSession || allowFuturesExtendedHours;
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
@@ -1194,6 +1240,25 @@ export function evaluateAutomationPlan({
     };
   }
 
+  if (!decisionWindow.canOpenNewTrade) {
+    const reason = decisionWindow.lossCooldownActive
+      ? `Decision window hold: last closed paper trade was a loss. Cooling down for ${decisionWindow.lossCooldownMinutes} minutes before any new entry.`
+      : decisionWindow.entryCooldownActive
+        ? `Decision window hold: last entry was ${decisionWindow.minutesSinceEntry} minutes ago. Wait for the ${decisionWindow.windowMinutes}-minute window.`
+        : `Decision window hold: new entries only open on ${decisionWindow.windowMinutes}-minute windows. Next window in about ${decisionWindow.minutesUntilNextWindow} minute(s).`;
+    return {
+      action: "hold",
+      reason,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      decisionWindow
+    };
+  }
+
   const buyCandidate = candidates.find((result) => {
     const flags = result.intelligence?.riskFlags || [];
     const selectedStrategy = strategyMap[result.symbol];
@@ -1241,7 +1306,8 @@ export function evaluateAutomationPlan({
         categoryRanks,
         bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
         futuresPolicy,
-        adaptiveRisk
+        adaptiveRisk,
+        decisionWindow
       };
     }
 
@@ -1264,7 +1330,8 @@ export function evaluateAutomationPlan({
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
-      adaptiveRisk
+      adaptiveRisk,
+      decisionWindow
     };
   }
 
@@ -1277,7 +1344,8 @@ export function evaluateAutomationPlan({
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
-      adaptiveRisk
+      adaptiveRisk,
+      decisionWindow
     };
   }
 
@@ -1305,7 +1373,8 @@ export function evaluateAutomationPlan({
         categoryRanks,
         bestOptionIdea,
         futuresPolicy,
-        adaptiveRisk
+        adaptiveRisk,
+        decisionWindow
       };
     }
 
@@ -1332,7 +1401,8 @@ export function evaluateAutomationPlan({
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
-      adaptiveRisk
+      adaptiveRisk,
+      decisionWindow
     };
   }
 
@@ -1348,7 +1418,8 @@ export function evaluateAutomationPlan({
     categoryRanks,
     bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
     futuresPolicy,
-    adaptiveRisk
+    adaptiveRisk,
+    decisionWindow
   };
 }
 
