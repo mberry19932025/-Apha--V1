@@ -276,6 +276,32 @@ h2 {
   font-size: 1.45rem;
 }
 
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.metric-grid div {
+  padding: 14px;
+  border: 1px solid rgba(157, 112, 31, 0.2);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(151, 105, 25, 0.07), rgba(255, 255, 255, 0.01)),
+    rgba(17, 17, 17, 0.88);
+}
+
+.metric-grid strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.08rem;
+}
+
+.metric-grid.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

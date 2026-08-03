@@ -2120,6 +2120,7 @@ export function createInitialPortfolio() {
     cash: 3000,
     startingCash: 3000,
     realizedPnl: 0,
+    withdrawnProfit: 0,
     trades: [],
     positions: {},
     optionPositions: {},
@@ -2133,6 +2134,7 @@ export function buildPortfolio(state, market) {
     positions: state.positions || {},
     optionPositions: state.optionPositions || {},
     futuresPositions: state.futuresPositions || {},
+    withdrawnProfit: Number(state.withdrawnProfit || 0),
     trades: state.trades || []
   };
   const positions = Object.entries(safeState.positions).map(([symbol, position]) => {
@@ -2209,6 +2211,8 @@ export function buildPortfolio(state, market) {
     equity: round(equity),
     startingCash: safeState.startingCash,
     realizedPnl: round(safeState.realizedPnl || 0),
+    withdrawnProfit: round(safeState.withdrawnProfit || 0),
+    withdrawableProfit: round(Math.max(0, Math.min(safeState.cash, equity - safeState.startingCash))),
     totalReturn: round(equity - safeState.startingCash),
     totalReturnPercent: round(((equity - safeState.startingCash) / safeState.startingCash) * 100),
     exposure: round(exposure),
@@ -2222,6 +2226,55 @@ export function buildPortfolio(state, market) {
     futuresPositions,
     trades: safeState.trades.slice(-30).reverse()
   };
+}
+
+export function withdrawPaperProfit(state, amount) {
+  const withdrawalAmount = Number(amount);
+  const safeState =
+    typeof structuredClone === "function"
+      ? structuredClone(state)
+      : JSON.parse(JSON.stringify(state));
+
+  if (!Number.isFinite(withdrawalAmount) || withdrawalAmount <= 0) {
+    throw new Error("Withdrawal amount must be greater than zero.");
+  }
+
+  if (withdrawalAmount < 5) {
+    throw new Error("Minimum paper profit withdrawal is $5.");
+  }
+
+  const cash = Number(safeState.cash || 0);
+  const startingCash = Number(safeState.startingCash || 3000);
+  const withdrawableProfit = Math.max(0, Math.min(cash, cash - startingCash));
+
+  if (withdrawableProfit < 5) {
+    throw new Error("No withdrawable paper profit yet. Minimum is $5 above starting cash.");
+  }
+
+  if (withdrawalAmount > withdrawableProfit) {
+    throw new Error(`Withdrawal exceeds available paper profit. Available: $${round(withdrawableProfit)}.`);
+  }
+
+  safeState.cash = round(cash - withdrawalAmount);
+  safeState.withdrawnProfit = round(Number(safeState.withdrawnProfit || 0) + withdrawalAmount);
+  safeState.trades ||= [];
+  safeState.trades.push({
+    id:
+      globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    assetType: "cash",
+    symbol: "PROFIT",
+    side: "withdraw",
+    quantity: 1,
+    price: round(withdrawalAmount),
+    gross: round(withdrawalAmount),
+    realizedPnl: 0,
+    strategy: "Profit Withdrawal",
+    reason: `Withdrew ${round(withdrawalAmount)} paper profit. Minimum withdrawal rule: $5.`,
+    createdAt: new Date().toISOString()
+  });
+
+  return safeState;
 }
 
 export function placePaperTrade(state, market, order) {

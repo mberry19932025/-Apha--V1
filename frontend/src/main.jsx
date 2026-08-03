@@ -26,7 +26,8 @@ import {
   scanMarket,
   strategies,
   symbols,
-  tradingKnowledge
+  tradingKnowledge,
+  withdrawPaperProfit
 } from "./botEngine.js";
 import { projectCapabilities, projectTests } from "./projectSpec.js";
 import "./styles.css";
@@ -151,6 +152,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [tradeForm, setTradeForm] = useState({ symbol: "AAPL", side: "buy", quantity: 1 });
+  const [withdrawalAmount, setWithdrawalAmount] = useState(5);
   const [backtestForm, setBacktestForm] = useState({
     symbol: "SPY",
     startingCash: 3000,
@@ -943,6 +945,25 @@ function App() {
     setLearningJournal([]);
     setSessionPeakEquity(next.equity || next.startingCash);
     setMessage("Today paper session reset to $3,000 starting cash.");
+  }
+
+  function submitProfitWithdrawal(event) {
+    event?.preventDefault();
+    setMessage("");
+
+    try {
+      const nextPortfolioState = withdrawPaperProfit(portfolioState, withdrawalAmount);
+      setPortfolioState(nextPortfolioState);
+      recordAutomation({
+        action: "withdraw",
+        symbol: "PROFIT",
+        quantity: 1,
+        reason: `Paper profit withdrawal completed: ${formatMoney(withdrawalAmount)}.`
+      });
+      setMessage(`Paper profit withdrawal completed: ${formatMoney(withdrawalAmount)}.`);
+    } catch (error) {
+      setMessage(error.message);
+    }
   }
 
   function watchTopSetup() {
@@ -2620,6 +2641,51 @@ function App() {
               Reset
             </button>
           </div>
+          <div className="metric-grid compact">
+            <div>
+              <small>Cash</small>
+              <strong>{formatMoney(portfolio.cash)}</strong>
+            </div>
+            <div>
+              <small>Withdrawn Profit</small>
+              <strong>{formatMoney(portfolio.withdrawnProfit)}</strong>
+            </div>
+            <div>
+              <small>Available to Withdraw</small>
+              <strong className={portfolio.withdrawableProfit >= 5 ? "gain" : ""}>
+                {formatMoney(portfolio.withdrawableProfit)}
+              </strong>
+            </div>
+          </div>
+          <form className="trade-form" onSubmit={submitProfitWithdrawal}>
+            <div className="form-row">
+              <label>
+                Profit Withdrawal
+                <input
+                  type="number"
+                  min="5"
+                  step="1"
+                  value={withdrawalAmount}
+                  onChange={(event) => setWithdrawalAmount(Number(event.target.value))}
+                />
+              </label>
+              <label>
+                Rule
+                <input value="Minimum $5 · closed/cash profit only" readOnly />
+              </label>
+            </div>
+            <button
+              type="submit"
+              className="secondary"
+              disabled={portfolio.withdrawableProfit < 5}
+            >
+              Withdraw Paper Profit
+            </button>
+          </form>
+          <p className="signal-note">
+            Withdrawals are simulated. The button only unlocks after closed paper profit creates at least $5 of
+            cash above starting capital.
+          </p>
           <table>
             <thead>
               <tr>
