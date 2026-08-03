@@ -773,7 +773,7 @@ export function evaluateAutomationPlan({
           strategyScore: strategyMap[buyCandidate.symbol]?.score || 0,
           liquidity: buyCandidate.intelligence?.liquidityGrade || "unknown",
           volatility: buyCandidate.intelligence?.volatilityRegime || "unknown",
-          riskFlags: ["Position size too large for $1,000 risk limits."]
+          riskFlags: ["Position size too large for $5,000 risk limits."]
         }
       ],
       profile,
@@ -801,7 +801,7 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const symbol = symbols.includes(String(options.symbol || "").toUpperCase())
     ? String(options.symbol).toUpperCase()
     : "SPY";
-  const startingCash = clampNumber(options.startingCash, 1000, 1000, 10000000);
+  const startingCash = clampNumber(options.startingCash, 5000, 1000, 10000000);
   const shortWindow = Math.floor(clampNumber(options.shortWindow, 20, 3, 100));
   const longWindow = Math.floor(clampNumber(options.longWindow, 50, shortWindow + 1, 220));
   const lookbackDays = Math.floor(clampNumber(options.lookbackDays, 260, longWindow + 30, 900));
@@ -1186,7 +1186,7 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
         suggestedQuantity: Math.max(
           1,
           Math.floor(
-            (1000 * riskPercent * Math.max(0.35, intelligence.volatilityScore / 100)) /
+            (5000 * riskPercent * Math.max(0.35, intelligence.volatilityScore / 100)) /
               (quote?.price || candles[lastIndex].close)
           )
         )
@@ -1442,8 +1442,8 @@ export function evaluateReadiness({
 
 export function createInitialPortfolio() {
   return {
-    cash: 1000,
-    startingCash: 1000,
+    cash: 5000,
+    startingCash: 5000,
     realizedPnl: 0,
     trades: [],
     positions: {},

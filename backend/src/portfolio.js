@@ -1,8 +1,8 @@
 import { getQuote } from "./market.js";
 
 const state = {
-  cash: 1000,
-  startingCash: 1000,
+  cash: 5000,
+  startingCash: 5000,
   realizedPnl: 0,
   trades: [],
   positions: {}

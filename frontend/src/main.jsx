@@ -130,7 +130,7 @@ function App() {
   const [tradeForm, setTradeForm] = useState({ symbol: "AAPL", side: "buy", quantity: 1 });
   const [backtestForm, setBacktestForm] = useState({
     symbol: "SPY",
-    startingCash: 1000,
+    startingCash: 5000,
     shortWindow: 20,
     longWindow: 50,
     lookbackDays: 260,
@@ -560,7 +560,7 @@ function App() {
     setAutomationLog([]);
     setAutomationSnapshots([]);
     setLearningJournal([]);
-    setMessage("Today paper session reset to $1,000 starting cash.");
+    setMessage("Today paper session reset to $5,000 starting cash.");
   }
 
   function watchTopSetup() {
@@ -719,12 +719,12 @@ function App() {
         </div>
       </section>
 
-      {portfolio.startingCash !== 1000 && (
+      {portfolio.startingCash !== 5000 && (
         <section className="alert danger-alert">
           Your browser is using an older saved paper portfolio with {formatMoney(portfolio.startingCash)} starting
-          cash. For today’s realistic test, reset to $1,000.
+          cash. For today’s realistic test, reset to $5,000.
           <button type="button" className="secondary mini" onClick={resetTodaySession}>
-            Reset to $1,000 Today
+            Reset to $5,000 Today
           </button>
         </section>
       )}
@@ -795,7 +795,7 @@ function App() {
             {automationPlan.reason}
           </p>
           <p className="signal-note">
-            Cash management: <strong>$1,000 account-aware sizing</strong> · max single trade{" "}
+            Cash management: <strong>$5,000 account-aware sizing</strong> · max single trade{" "}
             {automationMode === "bullish" ? "24%" : "16%"} cash · max exposure{" "}
             {automationMode === "bullish" ? "55%" : "32%"}.
           </p>
