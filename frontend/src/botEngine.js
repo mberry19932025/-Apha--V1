@@ -1,3 +1,7 @@
+import { assessMarketIntelligence, tradingKnowledge } from "./knowledge.js";
+
+export { tradingKnowledge };
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const symbols = ["AAPL", "MSFT", "NVDA", "TSLA", "SPY", "QQQ"];
@@ -775,6 +779,7 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
       const quote = market.find((item) => item.symbol === symbol);
       const shortAverage = movingAverage(candles, lastIndex, shortWindow);
       const longAverage = movingAverage(candles, lastIndex, longWindow);
+      const intelligence = assessMarketIntelligence(candles, quote);
       const setup = classifySetup({
         shortAverage,
         longAverage,
@@ -783,12 +788,24 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
         maxDrawdownPercent: backtest.summary.maxDrawdownPercent,
         strategyId
       });
+      const preliminaryScore = Math.min(99, Math.max(1, setup.score + intelligence.scoreAdjustment));
+      const action =
+        intelligence.liquidityGrade === "avoid" || intelligence.volatilityRegime === "extreme"
+          ? "hold"
+          : setup.action;
+      const adjustedScore =
+        action === "hold" ? Math.min(preliminaryScore, setup.action === "hold" ? 67 : 55) : preliminaryScore;
+      const reason =
+        action !== setup.action
+          ? `${setup.reason} Risk gate forced HOLD due to ${intelligence.liquidityGrade} liquidity / ${intelligence.volatilityRegime} volatility.`
+          : setup.reason;
 
       return {
         symbol,
-        action: setup.action,
-        score: setup.score,
-        reason: setup.reason,
+        action,
+        score: adjustedScore,
+        rawScore: setup.score,
+        reason,
         price: quote?.price || candles[lastIndex].close,
         changePercent: quote?.changePercent || 0,
         backtestReturnPercent: backtest.summary.returnPercent,
@@ -799,11 +816,18 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
         stopLossExits: backtest.summary.stopLossExits,
         protectedHalts: backtest.summary.protectedHalts,
         patternConfirmedEntries: backtest.summary.patternConfirmedEntries,
+        intelligence,
         dataSource: data.source,
         strategy: strategyId,
         shortAverage: round(shortAverage),
         longAverage: round(longAverage),
-        suggestedQuantity: Math.max(1, Math.floor((100000 * riskPercent) / (quote?.price || candles[lastIndex].close)))
+        suggestedQuantity: Math.max(
+          1,
+          Math.floor(
+            (100000 * riskPercent * Math.max(0.35, intelligence.volatilityScore / 100)) /
+              (quote?.price || candles[lastIndex].close)
+          )
+        )
       };
     })
     .sort((a, b) => b.score - a.score);

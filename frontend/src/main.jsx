@@ -16,7 +16,8 @@ import {
   riskProfiles,
   scanMarket,
   strategies,
-  symbols
+  symbols,
+  tradingKnowledge
 } from "./botEngine.js";
 import { projectCapabilities, projectTests } from "./projectSpec.js";
 import "./styles.css";
@@ -34,6 +35,13 @@ function formatMoney(value) {
 
 function formatPercent(value) {
   return `${Number(value || 0).toFixed(2)}%`;
+}
+
+function formatCompact(value) {
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(value || 0);
 }
 
 function buildPath(points) {
@@ -134,6 +142,7 @@ function App() {
     [signals, tradeForm.symbol]
   );
   const bestSetup = scanner?.results?.[0];
+  const marketIntelligence = scanner?.results || [];
   const equityPath = buildPath(backtest?.equityCurve || []);
   const currentEvaluation = useMemo(
     () => evaluateDiscipline(backtest, disciplineForm),
@@ -433,6 +442,94 @@ function App() {
                   {test.passed ? "✓" : "!"}
                 </span>
                 <span>{test.label}</span>
+              </div>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      <section className="card data-card">
+        <div className="card-header">
+          <h2>Market Intelligence</h2>
+          <span className="pill hold">liquidity + volatility</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Liquidity</th>
+              <th>Vol Regime</th>
+              <th>Ann. Vol</th>
+              <th>ATR %</th>
+              <th>$ Volume</th>
+              <th>Score Adj</th>
+              <th>Risk Flags</th>
+            </tr>
+          </thead>
+          <tbody>
+            {marketIntelligence.map((result) => (
+              <tr key={result.symbol}>
+                <td>{result.symbol}</td>
+                <td>
+                  <span className={`pill ${result.intelligence?.liquidityGrade === "deep" ? "buy" : "hold"}`}>
+                    {result.intelligence?.liquidityGrade || "-"}
+                  </span>
+                </td>
+                <td>{result.intelligence?.volatilityRegime || "-"}</td>
+                <td>{formatPercent(result.intelligence?.annualizedVolatility)}</td>
+                <td>{formatPercent(result.intelligence?.atrPercent)}</td>
+                <td>{formatMoney(result.intelligence?.averageDollarVolume)}</td>
+                <td className={(result.intelligence?.scoreAdjustment || 0) >= 0 ? "gain" : "loss"}>
+                  {result.intelligence?.scoreAdjustment > 0 ? "+" : ""}
+                  {result.intelligence?.scoreAdjustment || 0}
+                </td>
+                <td>
+                  <small>
+                    {result.intelligence?.riskFlags?.length
+                      ? result.intelligence.riskFlags.join(" ")
+                      : "No major liquidity/volatility warnings."}
+                  </small>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="knowledge-grid">
+        <article className="card">
+          <div className="card-header">
+            <h2>Knowledge Base</h2>
+            <span className="pill hold">research layer</span>
+          </div>
+          <div className="brief-list">
+            {tradingKnowledge.principles.map((principle) => (
+              <div className="brief-item" key={principle.id}>
+                <span className="checkmark">✓</span>
+                <span>
+                  <strong>{principle.label}</strong>
+                  <small>{principle.lesson}</small>
+                </span>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="card">
+          <div className="card-header">
+            <h2>Reading Map</h2>
+            <span className="pill hold">{formatCompact(tradingKnowledge.readingList.length)} books</span>
+          </div>
+          <div className="brief-list">
+            {tradingKnowledge.readingList.map((book) => (
+              <div className="brief-item" key={`${book.title}-${book.author}`}>
+                <span className="checkmark">•</span>
+                <span>
+                  <strong>{book.title}</strong>
+                  <small>
+                    {book.author} · {book.topic}
+                  </small>
+                </span>
               </div>
             ))}
           </div>

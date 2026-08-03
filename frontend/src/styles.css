@@ -136,6 +136,13 @@ h2 {
   margin-bottom: 18px;
 }
 
+.knowledge-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.9fr);
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
 .summary-strip {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -302,11 +309,16 @@ button:disabled {
 .brief-item {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
-  align-items: center;
+  align-items: start;
   gap: 10px;
   padding: 10px 12px;
   border-radius: 8px;
   background: rgba(31, 39, 36, 0.72);
+}
+
+.brief-item strong,
+.brief-item small {
+  display: block;
 }
 
 .checkmark,
@@ -504,6 +516,7 @@ button:disabled {
   .hero,
   .grid,
   .brief-grid,
+  .knowledge-grid,
   .scanner-grid,
   .backtest-layout,
   .discipline-grid,

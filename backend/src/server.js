@@ -9,6 +9,7 @@ import { resetPortfolio } from "./portfolio.js";
 import { scanMarket } from "./scanner.js";
 import { getDataStatus } from "./data.js";
 import { getSupportedSymbols } from "./market.js";
+import { tradingKnowledge } from "./knowledge.js";
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
@@ -46,6 +47,10 @@ app.get("/api/scanner", (req, res) => {
 
 app.get("/api/data/status", (_req, res) => {
   res.json({ symbols: getDataStatus(getSupportedSymbols()) });
+});
+
+app.get("/api/knowledge", (_req, res) => {
+  res.json(tradingKnowledge);
 });
 
 app.get("/api/portfolio", (_req, res) => {
