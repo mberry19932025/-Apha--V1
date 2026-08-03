@@ -509,6 +509,34 @@ function App() {
     setMessage("Paper portfolio reset.");
   }
 
+  function resetTodaySession() {
+    const next = createInitialPortfolio();
+    setPortfolioState(next);
+    setAutomationLog([]);
+    setAutomationSnapshots([]);
+    setLearningJournal([]);
+    setMessage("Today paper session reset to $1,000 starting cash.");
+  }
+
+  function watchTopSetup() {
+    if (!bestSetup) {
+      setMessage("Scanner is still loading.");
+      return;
+    }
+    setWatchlist((current) => (current.includes(bestSetup.symbol) ? current : [bestSetup.symbol, ...current]));
+    setMessage(`${bestSetup.symbol} added to watchlist.`);
+  }
+
+  function useBestCategoryWatchlist() {
+    const topCategory = categoryRanks[0];
+    if (!topCategory) {
+      setMessage("Category ranking is still loading.");
+      return;
+    }
+    setWatchlist(topCategory.symbols);
+    setMessage(`Watchlist set to best category: ${topCategory.category.toUpperCase()}.`);
+  }
+
   async function uploadCsv(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -646,6 +674,16 @@ function App() {
         </div>
       </section>
 
+      {portfolio.startingCash !== 1000 && (
+        <section className="alert danger-alert">
+          Your browser is using an older saved paper portfolio with {formatMoney(portfolio.startingCash)} starting
+          cash. For today’s realistic test, reset to $1,000.
+          <button type="button" className="secondary mini" onClick={resetTodaySession}>
+            Reset to $1,000 Today
+          </button>
+        </section>
+      )}
+
       <section className="card quick-trade-card">
         <div>
           <p className="eyebrow">Paper Trade Test</p>
@@ -751,7 +789,32 @@ function App() {
             <button type="button" className="secondary" onClick={() => saveAutomationSnapshot("Manual save for today's check")}>
               Save Today Snapshot
             </button>
+            <button type="button" className="secondary" onClick={watchTopSetup}>
+              Watch Top Setup
+            </button>
+            <button type="button" className="secondary" onClick={useBestCategoryWatchlist}>
+              Use Best Category
+            </button>
           </div>
+          {automationPlan.blockers?.length ? (
+            <div className="brief-list blocker-list">
+              {automationPlan.blockers.slice(0, 4).map((blocker) => (
+                <div className="brief-item" key={blocker.symbol}>
+                  <span className="xmark">!</span>
+                  <span>
+                    <strong>
+                      {blocker.symbol}: scanner {blocker.scannerScore}, strategy {blocker.strategyScore}
+                    </strong>
+                    <small>
+                      Action {blocker.action}; strategy {blocker.strategy}; liquidity {blocker.liquidity};
+                      volatility {blocker.volatility}
+                      {blocker.riskFlags.length ? `; ${blocker.riskFlags.join(" ")}` : ""}
+                    </small>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </article>
 
         <article className="card">

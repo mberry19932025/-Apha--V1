@@ -115,6 +115,15 @@ h2 {
   color: #fff7ed;
 }
 
+.danger-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-color: rgba(255, 138, 138, 0.42);
+  background: rgba(70, 24, 24, 0.72);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -372,6 +381,10 @@ button:disabled {
   gap: 10px;
 }
 
+.blocker-list {
+  margin-top: 14px;
+}
+
 .brief-item {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
@@ -605,6 +618,11 @@ button:disabled {
 
   .quick-actions {
     display: grid;
+  }
+
+  .danger-alert {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .metrics,

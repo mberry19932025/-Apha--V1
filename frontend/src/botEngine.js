@@ -662,6 +662,16 @@ export function evaluateAutomationPlan({
     return {
       action: "hold",
       reason: "No watched setup passes automation score, liquidity, volatility, and position rules.",
+      blockers: candidates.map((result) => ({
+        symbol: result.symbol,
+        action: result.action,
+        scannerScore: result.score,
+        strategy: strategyMap[result.symbol]?.strategy?.name || "n/a",
+        strategyScore: strategyMap[result.symbol]?.score || 0,
+        liquidity: result.intelligence?.liquidityGrade || "unknown",
+        volatility: result.intelligence?.volatilityRegime || "unknown",
+        riskFlags: result.intelligence?.riskFlags || []
+      })),
       profile,
       bestCategory,
       categoryRanks,
