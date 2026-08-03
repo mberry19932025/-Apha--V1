@@ -1,5 +1,5 @@
 :root {
-  color: #f8edd0;
+  color: #ead6a3;
   background: #050505;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -14,8 +14,8 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 10% 0%, rgba(245, 197, 79, 0.18), transparent 24rem),
-    radial-gradient(circle at 88% 12%, rgba(255, 229, 151, 0.09), transparent 22rem),
+    radial-gradient(circle at 10% 0%, rgba(151, 105, 25, 0.22), transparent 24rem),
+    radial-gradient(circle at 88% 12%, rgba(185, 132, 32, 0.11), transparent 22rem),
     linear-gradient(135deg, #030303 0%, #111111 42%, #050505 100%);
   background-attachment: fixed;
 }
@@ -42,7 +42,7 @@ select {
 
 .eyebrow,
 small {
-  color: #b9a66e;
+  color: #a8893a;
 }
 
 .eyebrow {
@@ -63,8 +63,8 @@ h1 {
   margin-bottom: 12px;
   font-size: clamp(2.4rem, 6vw, 5rem);
   line-height: 0.95;
-  color: #f6d77a;
-  background: linear-gradient(90deg, #8a6a18 0%, #f6d77a 28%, #fff1b6 48%, #c89421 72%, #f9e38d 100%);
+  color: #b8862b;
+  background: linear-gradient(90deg, #4d3108 0%, #9f7320 28%, #c6922e 48%, #73510f 72%, #b8862b 100%);
   background-size: 220% auto;
   -webkit-background-clip: text;
   background-clip: text;
@@ -74,11 +74,11 @@ h1 {
 
 h2 {
   font-size: 1.1rem;
-  color: #f2d27a;
+  color: #b98a2d;
 }
 
 .lede {
-  color: #d9c996;
+  color: #c8ad68;
   max-width: 680px;
   font-size: 1.1rem;
 }
@@ -86,14 +86,14 @@ h2 {
 .status-card,
 .card,
 .alert {
-  border: 1px solid rgba(219, 176, 74, 0.28);
+  border: 1px solid rgba(157, 112, 31, 0.34);
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01)),
-    radial-gradient(circle at 15% 0%, rgba(226, 180, 58, 0.08), transparent 16rem),
+    radial-gradient(circle at 15% 0%, rgba(151, 105, 25, 0.1), transparent 16rem),
     rgba(9, 9, 9, 0.9);
   box-shadow:
     0 24px 90px rgba(0, 0, 0, 0.45),
-    inset 0 1px 0 rgba(255, 231, 166, 0.08);
+    inset 0 1px 0 rgba(191, 143, 45, 0.08);
   backdrop-filter: blur(14px);
 }
 
@@ -119,8 +119,8 @@ h2 {
 }
 
 .dot.online {
-  background: #f4c84e;
-  box-shadow: 0 0 24px rgba(244, 200, 78, 0.82);
+  background: #b8862b;
+  box-shadow: 0 0 24px rgba(184, 134, 43, 0.62);
 }
 
 .alert {
@@ -184,7 +184,7 @@ h2 {
 .summary-strip div {
   min-width: 0;
   padding: 16px;
-  border: 1px solid rgba(219, 176, 74, 0.2);
+  border: 1px solid rgba(157, 112, 31, 0.24);
   border-radius: 8px;
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.006)),
@@ -233,7 +233,7 @@ h2 {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border: 1px solid rgba(219, 176, 74, 0.2);
+  border: 1px solid rgba(157, 112, 31, 0.24);
   border-radius: 8px;
   background: rgba(20, 19, 16, 0.66);
 }
@@ -266,7 +266,7 @@ h2 {
   padding: 16px;
   border-radius: 8px;
   background:
-    linear-gradient(145deg, rgba(255, 225, 140, 0.055), rgba(255, 255, 255, 0.01)),
+    linear-gradient(145deg, rgba(151, 105, 25, 0.07), rgba(255, 255, 255, 0.01)),
     rgba(17, 17, 17, 0.88);
 }
 
@@ -286,11 +286,11 @@ th,
 td {
   padding: 12px 8px;
   text-align: left;
-  border-bottom: 1px solid rgba(219, 176, 74, 0.12);
+  border-bottom: 1px solid rgba(157, 112, 31, 0.16);
 }
 
 th {
-  color: #b9a66e;
+  color: #a8893a;
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -312,16 +312,16 @@ th {
 label {
   display: grid;
   gap: 7px;
-  color: #dfcf99;
+  color: #c8ad68;
 }
 
 input,
 select {
   width: 100%;
-  border: 1px solid rgba(219, 176, 74, 0.28);
+  border: 1px solid rgba(157, 112, 31, 0.34);
   border-radius: 8px;
   padding: 12px 14px;
-  color: #fff7d7;
+  color: #ead6a3;
   background: rgba(13, 13, 13, 0.94);
 }
 
@@ -336,26 +336,26 @@ button {
   border-radius: 8px;
   padding: 13px 16px;
   color: #171006;
-  background: linear-gradient(135deg, #8a6419, #f6d77a 42%, #fff2ba 55%, #b98116);
+  background: linear-gradient(135deg, #4d3108, #9f7320 42%, #c6922e 55%, #6f4709);
   background-size: 180% auto;
   font-weight: 800;
   cursor: pointer;
   touch-action: manipulation;
   user-select: none;
-  box-shadow: 0 10px 28px rgba(226, 180, 58, 0.2);
+  box-shadow: 0 10px 28px rgba(151, 105, 25, 0.26);
 }
 
 button.buy-button {
   min-height: 48px;
   box-shadow:
-    0 0 0 2px rgba(246, 215, 122, 0.16),
-    0 16px 38px rgba(226, 180, 58, 0.22);
+    0 0 0 2px rgba(184, 134, 43, 0.18),
+    0 16px 38px rgba(151, 105, 25, 0.28);
   animation: button-shimmer 8s linear infinite;
 }
 
 button.secondary {
-  border: 1px solid rgba(219, 176, 74, 0.26);
-  color: #f8edd0;
+  border: 1px solid rgba(157, 112, 31, 0.32);
+  color: #ead6a3;
   background: rgba(17, 17, 17, 0.86);
   box-shadow: none;
 }
@@ -378,7 +378,7 @@ button:disabled {
 
 .signal-note {
   margin: 18px 0 0;
-  color: #d9c996;
+  color: #c8ad68;
 }
 
 .signals {
@@ -439,7 +439,7 @@ button:disabled {
 
 .checkmark {
   color: #052e16;
-  background: #f6d77a;
+  background: #b8862b;
 }
 
 .xmark {
@@ -454,8 +454,8 @@ button:disabled {
   gap: 14px;
   width: 100%;
   padding: 14px;
-  border: 1px solid rgba(219, 176, 74, 0.16);
-  color: #f8edd0;
+  border: 1px solid rgba(157, 112, 31, 0.22);
+  color: #ead6a3;
   background: rgba(18, 17, 15, 0.76);
   text-align: left;
   border-radius: 8px;
@@ -467,7 +467,7 @@ button:disabled {
 }
 
 .scan-row:hover {
-  border-color: rgba(246, 215, 122, 0.58);
+  border-color: rgba(184, 134, 43, 0.62);
   background: rgba(31, 26, 15, 0.94);
 }
 
@@ -494,7 +494,7 @@ button:disabled {
 
 .pill.buy {
   color: #052e16;
-  background: #f6d77a;
+  background: #b8862b;
 }
 
 .pill.sell {
@@ -504,7 +504,7 @@ button:disabled {
 
 .pill.hold {
   color: #3c2502;
-  background: #c9982b;
+  background: #8f6418;
 }
 
 .backtest-layout {
@@ -565,11 +565,11 @@ button:disabled {
   height: 220px;
   margin: 4px 0 18px;
   padding: 18px;
-  border: 1px solid rgba(219, 176, 74, 0.18);
+  border: 1px solid rgba(157, 112, 31, 0.24);
   border-radius: 8px;
   background:
-    linear-gradient(rgba(246, 215, 122, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(246, 215, 122, 0.04) 1px, transparent 1px),
+    linear-gradient(rgba(184, 134, 43, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(184, 134, 43, 0.04) 1px, transparent 1px),
     rgba(14, 14, 14, 0.72);
   background-size: 100% 45px, 80px 100%, auto;
 }
@@ -582,14 +582,14 @@ button:disabled {
 
 .chart-line {
   fill: none;
-  stroke: #f6d77a;
+  stroke: #b8862b;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 4;
 }
 
 .chart-fill {
-  fill: rgba(246, 215, 122, 0.14);
+  fill: rgba(184, 134, 43, 0.14);
   stroke: none;
 }
 
