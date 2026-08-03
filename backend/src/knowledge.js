@@ -95,6 +95,65 @@ export const tradingKnowledge = {
     "Cut strategy size when volatility regime is extreme.",
     "Never trust a backtest without slippage, fees, and out-of-sample thinking.",
     "Prefer repeatable process metrics over one-off P/L."
+  ],
+  traderModels: [
+    {
+      name: "D.E. Shaw",
+      window: "2024-2025 public reports",
+      edge: "Multi-strategy diversification, quantitative research, macro sleeve, capital recycling.",
+      botLesson: "Do not rely on one setup. Select the best strategy per symbol and require repeatable evidence.",
+      evidence: "Reported top 2024 LCH net gains; Composite and Oculus double-digit reported returns."
+    },
+    {
+      name: "Citadel",
+      window: "2024-2025 public reports",
+      edge: "Risk-managed multi-manager platform, diversified books, strict capital allocation.",
+      botLesson: "Limit exposure, cut risk during drawdowns, and avoid concentrating the account in one idea.",
+      evidence: "Reported large lifetime net gains and double-digit 2024/2025 flagship results."
+    },
+    {
+      name: "Millennium",
+      window: "2024-2025 public reports",
+      edge: "Pod-based risk control, fast deallocation from weak strategies, diversified alpha streams.",
+      botLesson: "Demote weak strategies quickly. Preserve optionality by keeping cash available.",
+      evidence: "Reported double-digit 2024/2025 gains with large multi-manager AUM."
+    },
+    {
+      name: "Bridgewater Pure Alpha",
+      window: "2025 public reports",
+      edge: "Macro regime analysis, asset-class diversification, volatility-aware position sizing.",
+      botLesson: "Treat stocks, ETFs, futures, rates/gold/bitcoin proxies as different regimes, not one market.",
+      evidence: "Reported historically strong 2025 Pure Alpha result in Reuters-linked reporting."
+    },
+    {
+      name: "AQR / systematic evidence",
+      window: "Academic and practitioner evidence",
+      edge: "Factor discipline, momentum/value/carry/trend research, diversification across signals.",
+      botLesson: "Use evidence-backed factors, but penalize crowding, drawdown, and weak recent samples.",
+      evidence: "Momentum and trend evidence is widely studied, but short-term trend reliability varies by market microstructure."
+    }
+  ],
+  evidenceRules: [
+    {
+      id: "multi-strategy",
+      rule: "A trade should come from the best current strategy for that symbol, not a single global strategy."
+    },
+    {
+      id: "risk-first",
+      rule: "Strategy score cannot override cash limits, exposure limits, drawdown cuts, or volatility gates."
+    },
+    {
+      id: "sample-quality",
+      rule: "Backtest quality improves with completed trades, profit factor above 1, positive average trade, and controlled drawdown."
+    },
+    {
+      id: "regime-awareness",
+      rule: "Trend, mean reversion, macro/futures, and option-premium ideas must be judged separately."
+    },
+    {
+      id: "survivorship-warning",
+      rule: "Do not copy famous traders. Convert observable success into testable rules and reject weak evidence."
+    }
   ]
 };
 

@@ -4,6 +4,7 @@ export const projectCapabilities = [
   "Browser CSV upload for manual data refreshes",
   "Paper portfolio saved in browser storage",
   "Scanner, backtester, strategy comparison, and paper order ticket",
+  "Trader training library based on recent top fund behavior and academic strategy evidence",
   "Backtest slippage and commission assumptions",
   "1-3% trade-target discipline scoring",
   "Browser learning journal for repeated paper-test evidence",

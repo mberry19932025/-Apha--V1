@@ -805,6 +805,7 @@ function App() {
               Strategy selected for next trade:{" "}
               <strong>
                 {strategyMap[automationPlan.symbol].strategy.name} · {strategyMap[automationPlan.symbol].score}/100
+                · {strategyMap[automationPlan.symbol].evidenceGrade}
               </strong>
             </p>
           )}
@@ -1019,6 +1020,9 @@ function App() {
                       {strategyMap[idea.underlying]?.score
                         ? `· ${strategyMap[idea.underlying].score}/100`
                         : ""}
+                      {strategyMap[idea.underlying]?.evidenceGrade
+                        ? ` · ${strategyMap[idea.underlying].evidenceGrade}`
+                        : ""}
                     </strong>
                   </small>
                   <span className="quick-actions inline-actions">
@@ -1217,6 +1221,50 @@ function App() {
         </article>
       </section>
 
+      <section className="knowledge-grid">
+        <article className="card">
+          <div className="card-header">
+            <h2>Trader Training Library</h2>
+            <span className="pill hold">{tradingKnowledge.traderModels.length} models</span>
+          </div>
+          <div className="brief-list">
+            {tradingKnowledge.traderModels.map((model) => (
+              <div className="brief-item" key={model.name}>
+                <span className="checkmark">T</span>
+                <span>
+                  <strong>
+                    {model.name} · {model.window}
+                  </strong>
+                  <small>{model.edge}</small>
+                  <small>
+                    Bot lesson: <strong>{model.botLesson}</strong>
+                  </small>
+                  <small>{model.evidence}</small>
+                </span>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="card">
+          <div className="card-header">
+            <h2>Evidence Rules</h2>
+            <span className="pill hold">anti-overfit</span>
+          </div>
+          <div className="brief-list">
+            {tradingKnowledge.evidenceRules.map((item) => (
+              <div className="brief-item" key={item.id}>
+                <span className="checkmark">✓</span>
+                <span>
+                  <strong>{item.id}</strong>
+                  <small>{item.rule}</small>
+                </span>
+              </div>
+            ))}
+          </div>
+        </article>
+      </section>
+
       <section className="scanner-grid">
         <article className="card">
           <div className="card-header">
@@ -1237,6 +1285,9 @@ function App() {
                       {strategyMap[result.symbol]?.strategy?.name || "calculating"}{" "}
                       {strategyMap[result.symbol]?.score
                         ? `· ${strategyMap[result.symbol].score}/100`
+                        : ""}
+                      {strategyMap[result.symbol]?.evidenceGrade
+                        ? ` · ${strategyMap[result.symbol].evidenceGrade}`
                         : ""}
                     </strong>
                   </small>

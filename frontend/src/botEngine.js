@@ -603,11 +603,18 @@ export function selectBestStrategyForSymbol(symbol, baseOptions = {}, dataBySymb
         Math.min(10, completedTrades * 1.5) -
         (completedTrades === 0 ? 20 : 0)
     );
+    const boundedScore = Math.max(1, Math.min(99, score));
 
     return {
       strategy,
       result,
-      score: Math.max(1, Math.min(99, score))
+      score: boundedScore,
+      evidenceGrade: boundedScore >= 75 ? "strong" : boundedScore >= 60 ? "building" : "weak",
+      trainingNotes: [
+        completedTrades >= 3 ? "sample present" : "small sample",
+        Number(summary.profitFactor || 0) >= 1 ? "profit factor clears 1" : "profit factor weak",
+        Number(summary.maxDrawdownPercent || 0) <= 5 ? "drawdown controlled" : "drawdown elevated"
+      ]
     };
   });
 
