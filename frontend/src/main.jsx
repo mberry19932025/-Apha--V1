@@ -339,6 +339,20 @@ function App() {
     (item) => recoveryWatchlist.includes(item.symbol) && item.source === "csv" && item.rows >= 60
   ).length;
   const hasEnoughRealEtfData = realEtfDataCount >= recoveryWatchlist.length;
+  const requiredEtfDataStatus = recoveryWatchlist.map((symbol) => {
+    const status = dataStatus.find((item) => item.symbol === symbol);
+    const ready = Boolean(status?.source === "csv" && status.rows >= 60);
+    return {
+      symbol,
+      ready,
+      rows: status?.rows || 0,
+      source: status?.source || "missing",
+      lastDate: status?.lastDate || null
+    };
+  });
+  const missingRequiredEtfs = requiredEtfDataStatus
+    .filter((item) => !item.ready)
+    .map((item) => item.symbol);
   const effectiveAutomationMode =
     beginnerSafeMode && portfolio.totalReturn <= 0 ? "moderate" : automationMode;
   const beginnerOptionsBlocked = beginnerSafeMode && portfolio.totalReturn <= 0;
@@ -1045,31 +1059,50 @@ function App() {
   }
 
   async function uploadCsv(event) {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files || []);
     event.target.value = "";
 
-    if (!file) {
+    if (!files.length) {
       return;
     }
 
-    const symbolFromName = file.name.replace(/\.[^.]+$/, "").trim().toUpperCase();
-    const symbol = symbols.includes(symbolFromName) ? symbolFromName : backtestForm.symbol;
-
     try {
-      const text = await file.text();
-      const candles = parseCandlesCsv(text);
+      const nextUploadedData = { ...uploadedData };
+      const loaded = [];
+      const skipped = [];
 
-      if (candles.length < 2) {
-        throw new Error("CSV must include date, open, high, low, close, and volume columns.");
+      for (const file of files) {
+        const symbolFromName = file.name.replace(/\.[^.]+$/, "").trim().toUpperCase();
+        const symbol = symbols.includes(symbolFromName) ? symbolFromName : files.length === 1 ? backtestForm.symbol : null;
+
+        if (!symbol) {
+          skipped.push(`${file.name}: filename must match a supported symbol`);
+          continue;
+        }
+
+        const text = await file.text();
+        const candles = parseCandlesCsv(text);
+
+        if (candles.length < 2) {
+          skipped.push(`${file.name}: missing date/open/high/low/close/volume columns`);
+          continue;
+        }
+
+        nextUploadedData[symbol] = candles;
+        loaded.push(`${symbol} ${candles.length} rows`);
       }
 
-      const nextUploadedData = { ...uploadedData, [symbol]: candles };
+      if (!loaded.length) {
+        throw new Error(skipped[0] || "No valid CSV files loaded.");
+      }
+
       const mergedData = { ...bundledData, ...nextUploadedData };
+      const primarySymbol = loaded[0].split(" ")[0];
       setUploadedData(nextUploadedData);
       setDataBySymbol(mergedData);
       setBacktest(
         runBacktest(
-          { ...backtestForm, symbol, riskPercent: Number(backtestForm.riskPercent) / 100 },
+          { ...backtestForm, symbol: primarySymbol, riskPercent: Number(backtestForm.riskPercent) / 100 },
           mergedData
         )
       );
@@ -1080,8 +1113,10 @@ function App() {
           market
         )
       );
-      syncSymbol(symbol);
-      setMessage(`Uploaded ${candles.length} rows for ${symbol}.`);
+      syncSymbol(primarySymbol);
+      setMessage(
+        `Uploaded ${loaded.join(", ")}.${skipped.length ? ` Skipped: ${skipped.join("; ")}.` : ""}`
+      );
     } catch (error) {
       setMessage(error.message);
     }
@@ -1097,6 +1132,22 @@ function App() {
     setBacktest(runBacktest(config, bundledData));
     setScanner(scanMarket(config, bundledData, market));
     setMessage("Uploaded CSV data cleared.");
+  }
+
+  function downloadCsvTemplate() {
+    const rows = [
+      "date,open,high,low,close,volume",
+      "2026-08-01,100.00,101.50,99.50,101.00,1000000",
+      "2026-08-02,101.00,102.25,100.75,101.80,1200000"
+    ];
+    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "SPY.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+    setMessage("Downloaded CSV template. Rename copies to SPY.csv, QQQ.csv, DIA.csv, and IWM.csv.");
   }
 
   function saveLearningRun() {
@@ -2049,19 +2100,46 @@ function App() {
       <section className="card upload-card">
         <div className="card-header">
           <h2>Update Market Data</h2>
-          <button type="button" className="secondary danger" onClick={clearUploadedData}>
-            Clear Uploads
-          </button>
+          <div className="quick-actions">
+            <button type="button" className="secondary mini" onClick={downloadCsvTemplate}>
+              CSV Template
+            </button>
+            <button type="button" className="secondary danger" onClick={clearUploadedData}>
+              Clear Uploads
+            </button>
+          </div>
         </div>
         <div className="upload-row">
           <label className="file-picker">
-            Upload CSV
-            <input type="file" accept=".csv,text/csv" onChange={uploadCsv} />
+            Upload Required ETF CSVs
+            <input type="file" accept=".csv,text/csv" multiple onChange={uploadCsv} />
           </label>
           <p className="signal-note">
-            Name files by symbol, like AAPL.csv or SPY.csv. Uploaded data stays in this browser.
+            Upload <strong>SPY.csv, QQQ.csv, DIA.csv, and IWM.csv</strong>. Required columns:
+            date, open, high, low, close, volume. Uploaded data stays in this browser.
           </p>
         </div>
+        <div className="brief-list">
+          {requiredEtfDataStatus.map((item) => (
+            <div className="brief-item" key={item.symbol}>
+              <span className={item.ready ? "checkmark" : "xmark"}>{item.ready ? "✓" : "!"}</span>
+              <span>
+                <strong>
+                  {item.symbol} · {item.ready ? "ready" : "needed"}
+                </strong>
+                <small>
+                  Source {item.source}; rows {item.rows}; latest {item.lastDate || "-"}.
+                  {item.ready ? " Meets real-data requirement." : " Needs at least 60 real CSV rows."}
+                </small>
+              </span>
+            </div>
+          ))}
+        </div>
+        {!hasEnoughRealEtfData && (
+          <p className="signal-note loss">
+            Automation will block new entries until these ETF CSVs are loaded: {missingRequiredEtfs.join(", ")}.
+          </p>
+        )}
       </section>
 
       <section className="backtest-layout">
