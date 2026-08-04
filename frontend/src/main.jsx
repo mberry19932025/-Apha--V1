@@ -398,6 +398,23 @@ function App() {
       sessionPeakEquity
     ]
   );
+  const startGateIssues = [
+    !hasEnoughRealEtfData && `Missing required ETF CSV data: ${missingRequiredEtfs.join(", ")}`,
+    emergencyStopActive && "Emergency Stop is active.",
+    !beginnerSafeMode && "Beginner Safe Mode is off.",
+    effectiveAutomationMode !== "moderate" && "Effective mode is not Moderate.",
+    effectiveOptionsEnabled && "Options are still enabled.",
+    effectiveFuturesExtendedHours && "Futures extended-hours is enabled.",
+    maxTradesPerDay > 3 && "Max entries is above beginner limit.",
+    decisionWindowMinutes < 5 && "Entry window is faster than 5 minutes.",
+    automationPlan.noTradeIntelligence?.blockedReasons?.length &&
+      automationPlan.noTradeIntelligence.blockedReasons.join(" "),
+    automationPlan.profitLock?.hardDailyLossStop && "Daily kill switch is active.",
+    automationPlan.profitLock?.secureDayProfit && !automationPlan.profitLock?.runnerLeft &&
+      "Profit target already secured for the day.",
+    !marketClock.isRegularSession && !effectiveFuturesExtendedHours && "Regular market is closed."
+  ].filter(Boolean);
+  const startGateReady = startGateIssues.length === 0;
 
   useEffect(() => {
     async function init() {
@@ -744,6 +761,18 @@ function App() {
         reason: "Automation stopped manually."
       });
       setMessage("Automation stopped manually.");
+      return;
+    }
+
+    if (!startGateReady) {
+      const reason = `Automation not started: ${startGateIssues.join(" ")}`;
+      recordAutomation({
+        action: "start-blocked",
+        symbol: "-",
+        quantity: 0,
+        reason
+      });
+      setMessage(reason);
       return;
     }
 
@@ -1381,6 +1410,21 @@ function App() {
               ? ` · ${marketClock.minutesUntilClose} minutes until close`
               : " · automation stops unless futures extended-hours is enabled"}
           </p>
+          <div className="brief-list blocker-list">
+            <div className="brief-item">
+              <span className={startGateReady ? "checkmark" : "xmark"}>
+                {startGateReady ? "✓" : "!"}
+              </span>
+              <span>
+                <strong>Start Readiness Gate: {startGateReady ? "READY FOR ONE CYCLE" : "WAIT"}</strong>
+                <small>
+                  {startGateReady
+                    ? "Run One Cycle Now first. Only start full automation if that result is sane."
+                    : startGateIssues.join(" ")}
+                </small>
+              </span>
+            </div>
+          </div>
           <p className="signal-note">
             Current plan: <strong>{automationPlan.action.toUpperCase()}</strong>{" "}
             {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
