@@ -1476,17 +1476,17 @@ function App() {
     <main className="app">
       <section className="hero">
         <div>
-          <p className="eyebrow">Static Paper Bot</p>
+          <p className="eyebrow">Paper Trading Command Center</p>
           <h1>Apex Alpha AI</h1>
           <p className="lede">
-            Scan, backtest, paper trade, and monitor risk without a paid backend.
+            Strategy scanner, live candle updater, paper automation, and risk controls in one dashboard.
           </p>
         </div>
         <div className="status-card">
           <span className="dot online" />
           <div>
-            <strong>Static App Ready</strong>
-            <small>browser paper mode</small>
+            <strong>Command Center Ready</strong>
+            <small>paper mode · risk gated</small>
           </div>
         </div>
       </section>
