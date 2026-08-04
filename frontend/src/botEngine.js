@@ -349,6 +349,33 @@ function relativeStrengthIndex(candles, period = 14) {
   return output;
 }
 
+function averageTrueRange(candles, endIndex, period = 14) {
+  if (endIndex <= 0 || candles.length < 2) {
+    return null;
+  }
+
+  const start = Math.max(1, endIndex - period + 1);
+  const ranges = [];
+
+  for (let index = start; index <= endIndex; index += 1) {
+    const candle = candles[index];
+    const previousClose = candles[index - 1]?.close ?? candle.close;
+    ranges.push(
+      Math.max(
+        candle.high - candle.low,
+        Math.abs(candle.high - previousClose),
+        Math.abs(candle.low - previousClose)
+      )
+    );
+  }
+
+  if (!ranges.length) {
+    return null;
+  }
+
+  return ranges.reduce((sum, value) => sum + value, 0) / ranges.length;
+}
+
 function buildStrategySignals(candles, strategyId, { shortWindow, longWindow }) {
   const closes = candles.map((candle) => candle.close);
   const signals = Array(candles.length).fill("hold");
@@ -1487,6 +1514,11 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
   const stopLossPercent = clampNumber(options.stopLossPercent, 2, 0.25, 20);
   const takeProfitPercent = clampNumber(options.takeProfitPercent, 3, 0.25, 30);
   const trailingStopPercent = clampNumber(options.trailingStopPercent, 1.25, 0, 20);
+  const useAtrStops = options.useAtrStops !== false;
+  const atrPeriod = Math.floor(clampNumber(options.atrPeriod, 14, 5, 50));
+  const atrStopMultiplier = clampNumber(options.atrStopMultiplier, 1.5, 0.5, 5);
+  const atrTargetMultiplier = clampNumber(options.atrTargetMultiplier, 2, 0.5, 8);
+  const atrTrailMultiplier = clampNumber(options.atrTrailMultiplier, 1.2, 0.5, 5);
   const profitLockPercent = clampNumber(options.profitLockPercent, 1, 0, 20);
   const protectedProfitGivebackPercent = clampNumber(options.protectedProfitGivebackPercent, 1, 0.25, 20);
   const maxConsecutiveLosses = Math.floor(clampNumber(options.maxConsecutiveLosses, 3, 1, 20));
@@ -1592,17 +1624,25 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
 
     if (shares > 0) {
       highestSinceEntry = Math.max(highestSinceEntry, candle.high);
-      const stopPrice = entryPrice * (1 - stopLossPercent / 100);
-      const takeProfitPrice = entryPrice * (1 + takeProfitPercent / 100);
-      const trailingStopPrice =
-        trailingStopPercent > 0 ? highestSinceEntry * (1 - trailingStopPercent / 100) : 0;
+      const atr = useAtrStops ? averageTrueRange(candles, index, atrPeriod) : null;
+      const stopPrice = atr
+        ? entryPrice - atr * atrStopMultiplier
+        : entryPrice * (1 - stopLossPercent / 100);
+      const takeProfitPrice = atr
+        ? entryPrice + atr * atrTargetMultiplier
+        : entryPrice * (1 + takeProfitPercent / 100);
+      const trailingStopPrice = atr
+        ? highestSinceEntry - atr * atrTrailMultiplier
+        : trailingStopPercent > 0
+          ? highestSinceEntry * (1 - trailingStopPercent / 100)
+          : 0;
 
       if (candle.low <= stopPrice) {
-        closePosition(candle, stopPrice, "Stop loss protected capital.", "stop-loss");
+        closePosition(candle, stopPrice, useAtrStops ? "ATR stop protected capital." : "Stop loss protected capital.", "stop-loss");
       } else if (candle.high >= takeProfitPrice) {
-        closePosition(candle, takeProfitPrice, "Take profit captured target.", "take-profit");
+        closePosition(candle, takeProfitPrice, useAtrStops ? "ATR target captured volatility-based reward." : "Take profit captured target.", "take-profit");
       } else if (trailingStopPrice > entryPrice && candle.low <= trailingStopPrice) {
-        closePosition(candle, trailingStopPrice, "Trailing stop protected open profit.", "trailing-stop");
+        closePosition(candle, trailingStopPrice, useAtrStops ? "ATR trailing stop protected open profit." : "Trailing stop protected open profit.", "trailing-stop");
       }
     }
 
@@ -1701,6 +1741,11 @@ export function runBacktest(options = {}, dataBySymbol = {}) {
       stopLossPercent,
       takeProfitPercent,
       trailingStopPercent,
+      useAtrStops,
+      atrPeriod,
+      atrStopMultiplier,
+      atrTargetMultiplier,
+      atrTrailMultiplier,
       profitLockPercent,
       protectedProfitGivebackPercent,
       maxConsecutiveLosses,

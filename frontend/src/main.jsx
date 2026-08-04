@@ -167,6 +167,11 @@ function App() {
     stopLossPercent: 2,
     takeProfitPercent: 3,
     trailingStopPercent: 1.25,
+    useAtrStops: true,
+    atrPeriod: 14,
+    atrStopMultiplier: 1.5,
+    atrTargetMultiplier: 2,
+    atrTrailMultiplier: 1.2,
     profitLockPercent: 1,
     protectedProfitGivebackPercent: 1,
     maxConsecutiveLosses: 3,
@@ -2193,6 +2198,89 @@ function App() {
                   }
                 />
               </label>
+              <label className="inline-toggle">
+                <input
+                  type="checkbox"
+                  checked={backtestForm.useAtrStops}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      useAtrStops: event.target.checked
+                    })
+                  }
+                />
+                Use ATR Stops
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                ATR Period
+                <input
+                  type="number"
+                  min="5"
+                  max="50"
+                  step="1"
+                  value={backtestForm.atrPeriod}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      atrPeriod: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+              <label>
+                ATR Stop x
+                <input
+                  type="number"
+                  min="0.5"
+                  max="5"
+                  step="0.1"
+                  value={backtestForm.atrStopMultiplier}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      atrStopMultiplier: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                ATR Target x
+                <input
+                  type="number"
+                  min="0.5"
+                  max="8"
+                  step="0.1"
+                  value={backtestForm.atrTargetMultiplier}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      atrTargetMultiplier: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+              <label>
+                ATR Trail x
+                <input
+                  type="number"
+                  min="0.5"
+                  max="5"
+                  step="0.1"
+                  value={backtestForm.atrTrailMultiplier}
+                  onChange={(event) =>
+                    setBacktestForm({
+                      ...backtestForm,
+                      atrTrailMultiplier: Number(event.target.value)
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <div className="form-row">
               <label>
                 Profit Lock %
                 <input
