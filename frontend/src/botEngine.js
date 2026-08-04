@@ -182,7 +182,10 @@ export async function loadBundledData() {
         if (!response.ok) {
           return [symbol, []];
         }
-        return [symbol, parseCandlesCsv(await response.text())];
+        const candles = parseCandlesCsv(await response.text());
+        candles.dataSource = "csv";
+        candles.dataInterval = "daily";
+        return [symbol, candles];
       } catch {
         return [symbol, []];
       }
@@ -266,7 +269,8 @@ function getHistoricalCandlesWithSource(symbol, lookbackDays, minRows, dataBySym
   const csvCandles = dataBySymbol[symbol] || [];
   if (csvCandles.length >= minRows) {
     return {
-      source: "csv",
+      source: csvCandles.dataSource || "csv",
+      interval: csvCandles.dataInterval || "daily",
       candles: csvCandles.slice(-lookbackDays),
       rowsAvailable: csvCandles.length
     };
@@ -1029,7 +1033,7 @@ export function evaluateAutomationPlan({
     blockedReasons: []
   };
   if (realDataRequired && !hasRequiredRealData) {
-    noTradeIntelligence.blockedReasons.push("Real ETF CSV candle data is required before new entries.");
+    noTradeIntelligence.blockedReasons.push("Real ETF CSV/API candle data is required before new entries.");
   }
   if (marketRegime.tradePermission === "blocked") {
     noTradeIntelligence.blockedReasons.push(marketRegime.reason);
@@ -1382,7 +1386,7 @@ export function evaluateAutomationPlan({
   if (realDataRequired && !hasRequiredRealData) {
     return {
       action: "hold",
-      reason: "Real data required mode: load CSV candles for SPY, DIA, IWM, and QQQ before allowing new entries.",
+      reason: "Real data required mode: load CSV or API candles for SPY, DIA, IWM, and QQQ before allowing new entries.",
       profile,
       bestCategory,
       categoryRanks,
@@ -2093,9 +2097,11 @@ export function scanMarket(options = {}, dataBySymbol = {}, market = getMarketSn
 export function getDataStatus(dataBySymbol = {}) {
   return symbols.map((symbol) => {
     const candles = dataBySymbol[symbol] || [];
+    const source = candles.dataSource || (candles.length ? "csv" : "simulated");
     return {
       symbol,
-      source: candles.length ? "csv" : "simulated",
+      source,
+      interval: candles.dataInterval || (source === "simulated" ? "synthetic" : "daily"),
       rows: candles.length,
       firstDate: candles[0]?.date || null,
       lastDate: candles.at(-1)?.date || null
@@ -2211,7 +2217,8 @@ function daysSinceDate(dateString) {
     return Infinity;
   }
 
-  const date = new Date(`${dateString}T00:00:00Z`);
+  const normalizedDate = String(dateString).slice(0, 10);
+  const date = new Date(`${normalizedDate}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) {
     return Infinity;
   }
@@ -2239,8 +2246,10 @@ export function evaluateReadiness({
   const checks = [
     {
       id: "real-data",
-      label: "All watchlist symbols use CSV data",
-      passed: dataStatus.length === symbols.length && dataStatus.every((item) => item.source === "csv")
+      label: "All watchlist symbols use real CSV/API data",
+      passed:
+        dataStatus.length === symbols.length &&
+        dataStatus.every((item) => ["csv", "api-1min", "api-daily"].includes(item.source))
     },
     {
       id: "fresh-data",

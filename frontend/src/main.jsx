@@ -34,6 +34,8 @@ import "./styles.css";
 
 const portfolioKey = "apex-alpha-static-portfolio";
 const uploadedDataKey = "apex-alpha-uploaded-data";
+const apiDataKey = "apex-alpha-api-data";
+const polygonApiKeyStorageKey = "apex-alpha-polygon-api-key";
 const learningJournalKey = "apex-alpha-learning-journal";
 const watchlistKey = "apex-alpha-watchlist";
 const automationLogKey = "apex-alpha-automation-log";
@@ -41,6 +43,8 @@ const automationSnapshotsKey = "apex-alpha-automation-snapshots";
 const sessionPeakEquityKey = "apex-alpha-session-peak-equity";
 const emergencyStopKey = "apex-alpha-emergency-stop";
 const recoveryWatchlist = ["SPY", "DIA", "IWM", "QQQ"];
+const apiUpdateWatchlist = ["SPY", "QQQ", "DIA", "IWM"];
+const realDataSources = ["csv", "api-1min", "api-daily"];
 const opportunityWatchlist = [
   {
     symbol: "GLD",
@@ -64,7 +68,7 @@ const opportunityWatchlist = [
     symbol: "VNQ / XLRE",
     category: "REITs",
     stance: "research",
-    rule: "Add real candle CSVs before backtesting or trading."
+    rule: "Add real candle CSV/API data before backtesting or trading."
   },
   {
     symbol: "LIT / lithium",
@@ -94,6 +98,15 @@ function formatCompact(value) {
 
 function makeId() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function markCandles(candles, source = "csv", interval = "daily") {
+  if (!Array.isArray(candles)) {
+    return [];
+  }
+  candles.dataSource = source;
+  candles.dataInterval = interval;
+  return candles;
 }
 
 function buildPath(points) {
@@ -129,10 +142,74 @@ function loadStoredPortfolio() {
 function loadUploadedData() {
   try {
     const stored = localStorage.getItem(uploadedDataKey);
-    return stored ? JSON.parse(stored) : {};
+    const parsed = stored ? JSON.parse(stored) : {};
+    return Object.fromEntries(
+      Object.entries(parsed).map(([symbol, candles]) => [symbol, markCandles(candles, "csv", "daily")])
+    );
   } catch {
     return {};
   }
+}
+
+function loadApiData() {
+  try {
+    const stored = localStorage.getItem(apiDataKey);
+    const parsed = stored ? JSON.parse(stored) : {};
+    return Object.fromEntries(
+      Object.entries(parsed).map(([symbol, payload]) => {
+        if (Array.isArray(payload)) {
+          return [symbol, markCandles(payload, "api-1min", "1-minute")];
+        }
+        return [
+          symbol,
+          markCandles(payload?.candles || [], payload?.source || "api-1min", payload?.interval || "1-minute")
+        ];
+      })
+    );
+  } catch {
+    return {};
+  }
+}
+
+function loadStoredString(key, fallback = "") {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getIsoDateOffset(daysBack = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() - daysBack);
+  return date.toISOString().slice(0, 10);
+}
+
+function mergeLatestApiQuotes(currentMarket, apiCandlesBySymbol) {
+  const syntheticMarket = currentMarket?.length ? currentMarket : getMarketSnapshot();
+  return symbols.map((symbol) => {
+    const existingQuote = syntheticMarket.find((quote) => quote.symbol === symbol);
+    const candles = apiCandlesBySymbol[symbol] || [];
+    const latest = candles.at(-1);
+    const previous = candles.at(-2);
+
+    if (!latest?.close) {
+      return existingQuote || getMarketSnapshot().find((quote) => quote.symbol === symbol);
+    }
+
+    const changePercent = previous?.close
+      ? ((Number(latest.close) - Number(previous.close)) / Number(previous.close)) * 100
+      : existingQuote?.changePercent || 0;
+
+    return {
+      symbol,
+      price: Number(latest.close),
+      changePercent,
+      volume: Number(latest.volume || existingQuote?.volume || 0),
+      source: candles.dataSource || "api-1min",
+      updatedAt: latest.date
+    };
+  });
 }
 
 function loadLearningJournal() {
@@ -178,6 +255,10 @@ function App() {
   const [dataBySymbol, setDataBySymbol] = useState({});
   const [bundledData, setBundledData] = useState({});
   const [uploadedData, setUploadedData] = useState(loadUploadedData);
+  const [apiData, setApiData] = useState(loadApiData);
+  const [polygonApiKey, setPolygonApiKey] = useState(() => loadStoredString(polygonApiKeyStorageKey));
+  const [apiLoading, setApiLoading] = useState(false);
+  const [apiLookbackDays, setApiLookbackDays] = useState(5);
   const [market, setMarket] = useState(() => getMarketSnapshot());
   const [scanner, setScanner] = useState(null);
   const [portfolioState, setPortfolioState] = useState(loadStoredPortfolio);
@@ -368,12 +449,12 @@ function App() {
   );
   const passedTests = selfTests.filter((test) => test.passed).length;
   const realEtfDataCount = dataStatus.filter(
-    (item) => recoveryWatchlist.includes(item.symbol) && item.source === "csv" && item.rows >= 60
+    (item) => recoveryWatchlist.includes(item.symbol) && realDataSources.includes(item.source) && item.rows >= 60
   ).length;
   const hasEnoughRealEtfData = realEtfDataCount >= recoveryWatchlist.length;
   const requiredEtfDataStatus = recoveryWatchlist.map((symbol) => {
     const status = dataStatus.find((item) => item.symbol === symbol);
-    const ready = Boolean(status?.source === "csv" && status.rows >= 60);
+    const ready = Boolean(realDataSources.includes(status?.source) && status.rows >= 60);
     return {
       symbol,
       ready,
@@ -437,18 +518,18 @@ function App() {
         const dataItem = dataStatus.find((item) => item.symbol === opportunity.symbol);
         const quote = market.find((item) => item.symbol === opportunity.symbol);
         const hasTradableSymbol = symbols.includes(opportunity.symbol);
-        const hasCsvData = dataItem?.source === "csv" && dataItem.rows >= 60;
+        const hasRealData = realDataSources.includes(dataItem?.source) && dataItem.rows >= 60;
         return {
           ...opportunity,
           scannerResult,
           dataItem,
           quote,
           hasTradableSymbol,
-          hasCsvData,
+          hasRealData,
           status: !hasTradableSymbol
             ? "not loaded"
-            : hasCsvData
-              ? "csv ready"
+            : hasRealData
+              ? `${dataItem.source} ready`
               : dataItem?.source
                 ? `${dataItem.source} data`
                 : "no data"
@@ -457,7 +538,7 @@ function App() {
     [scanner, dataStatus, market]
   );
   const startGateIssues = [
-    !hasEnoughRealEtfData && `Missing required ETF CSV data: ${missingRequiredEtfs.join(", ")}`,
+    !hasEnoughRealEtfData && `Missing required ETF CSV/API data: ${missingRequiredEtfs.join(", ")}`,
     emergencyStopActive && "Emergency Stop is active.",
     !beginnerSafeMode && "Beginner Safe Mode is off.",
     effectiveAutomationMode !== "moderate" && "Effective mode is not Moderate.",
@@ -478,7 +559,7 @@ function App() {
     async function init() {
       try {
         const loadedBundledData = await loadBundledData();
-        const mergedData = { ...loadedBundledData, ...uploadedData };
+        const mergedData = { ...loadedBundledData, ...uploadedData, ...apiData };
         const config = {
           ...backtestForm,
           riskPercent: Number(backtestForm.riskPercent) / 100
@@ -503,8 +584,17 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem(uploadedDataKey, JSON.stringify(uploadedData));
-    setDataBySymbol({ ...bundledData, ...uploadedData });
-  }, [uploadedData, bundledData]);
+    setDataBySymbol({ ...bundledData, ...uploadedData, ...apiData });
+  }, [uploadedData, bundledData, apiData]);
+
+  useEffect(() => {
+    localStorage.setItem(apiDataKey, JSON.stringify(apiData));
+    setDataBySymbol({ ...bundledData, ...uploadedData, ...apiData });
+  }, [apiData, bundledData, uploadedData]);
+
+  useEffect(() => {
+    localStorage.setItem(polygonApiKeyStorageKey, polygonApiKey.trim());
+  }, [polygonApiKey]);
 
   useEffect(() => {
     localStorage.setItem(learningJournalKey, JSON.stringify(learningJournal));
@@ -562,10 +652,10 @@ function App() {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setMarket(getMarketSnapshot());
+      setMarket(mergeLatestApiQuotes(getMarketSnapshot(), apiData));
     }, 15000);
     return () => clearInterval(timer);
-  }, []);
+  }, [apiData]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1168,7 +1258,7 @@ function App() {
         }
 
         const text = await file.text();
-        const candles = parseCandlesCsv(text);
+        const candles = markCandles(parseCandlesCsv(text), "csv", "daily");
 
         if (candles.length < 2) {
           skipped.push(`${file.name}: missing date/open/high/low/close/volume columns`);
@@ -1195,7 +1285,7 @@ function App() {
       );
       setScanner(
         scanMarket(
-          { ...backtestForm, symbol, riskPercent: Number(backtestForm.riskPercent) / 100 },
+          { ...backtestForm, symbol: primarySymbol, riskPercent: Number(backtestForm.riskPercent) / 100 },
           mergedData,
           market
         )
@@ -1215,10 +1305,119 @@ function App() {
       riskPercent: Number(backtestForm.riskPercent) / 100
     };
     setUploadedData({});
-    setDataBySymbol(bundledData);
-    setBacktest(runBacktest(config, bundledData));
-    setScanner(scanMarket(config, bundledData, market));
+    const mergedData = { ...bundledData, ...apiData };
+    setDataBySymbol(mergedData);
+    setBacktest(runBacktest(config, mergedData));
+    setScanner(scanMarket(config, mergedData, market));
     setMessage("Uploaded CSV data cleared.");
+  }
+
+  async function fetchPolygonMinuteCandles(symbol) {
+    const token = polygonApiKey.trim();
+    if (!token) {
+      throw new Error("Polygon API key is required.");
+    }
+
+    const from = getIsoDateOffset(apiLookbackDays);
+    const to = getIsoDateOffset(0);
+    const url = new URL(
+      `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/minute/${from}/${to}`
+    );
+    url.searchParams.set("adjusted", "true");
+    url.searchParams.set("sort", "asc");
+    url.searchParams.set("limit", "50000");
+    url.searchParams.set("apiKey", token);
+
+    const response = await fetch(url.toString());
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(payload?.error || payload?.message || `${symbol}: Polygon request failed.`);
+    }
+
+    if (!Array.isArray(payload.results) || !payload.results.length) {
+      throw new Error(payload?.message || `${symbol}: Polygon returned no 1-minute candles.`);
+    }
+
+    return markCandles(
+      payload.results.map((bar) => ({
+        date: new Date(bar.t).toISOString(),
+        open: Number(bar.o),
+        high: Number(bar.h),
+        low: Number(bar.l),
+        close: Number(bar.c),
+        volume: Number(bar.v || 0)
+      })),
+      "api-1min",
+      "1-minute"
+    );
+  }
+
+  async function refreshApiCandles() {
+    setMessage("");
+
+    if (!polygonApiKey.trim()) {
+      setMessage("Add your free Polygon API key first. It stays in this browser.");
+      return;
+    }
+
+    setApiLoading(true);
+
+    try {
+      const nextApiData = { ...apiData };
+      const loaded = [];
+      const skipped = [];
+
+      for (const symbol of apiUpdateWatchlist) {
+        try {
+          const candles = await fetchPolygonMinuteCandles(symbol);
+          nextApiData[symbol] = candles;
+          loaded.push(`${symbol} ${candles.length} 1-min bars`);
+        } catch (error) {
+          skipped.push(`${symbol}: ${error.message}`);
+        }
+      }
+
+      if (!loaded.length) {
+        throw new Error(skipped.join(" ") || "No API candles loaded.");
+      }
+
+      const mergedData = { ...bundledData, ...uploadedData, ...nextApiData };
+      const config = {
+        ...backtestForm,
+        symbol: apiUpdateWatchlist[0],
+        riskPercent: Number(backtestForm.riskPercent) / 100
+      };
+      const apiMarket = mergeLatestApiQuotes(market, nextApiData);
+
+      setApiData(nextApiData);
+      setDataBySymbol(mergedData);
+      setMarket(apiMarket);
+      setBacktest(runBacktest(config, mergedData));
+      setScanner(scanMarket(config, mergedData, apiMarket));
+      setMessage(
+        `API candles updated: ${loaded.join(", ")}.${
+          skipped.length ? ` Skipped: ${skipped.join("; ")}.` : ""
+        } Free Polygon keys are rate-limited, so wait at least one minute before refreshing again.`
+      );
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setApiLoading(false);
+    }
+  }
+
+  function clearApiCandles() {
+    const config = {
+      ...backtestForm,
+      riskPercent: Number(backtestForm.riskPercent) / 100
+    };
+    setApiData({});
+    const mergedData = { ...bundledData, ...uploadedData };
+    setDataBySymbol(mergedData);
+    setBacktest(runBacktest(config, mergedData));
+    setScanner(scanMarket(config, mergedData, market));
+    setMessage("API candle cache cleared. The app is back to uploaded/bundled CSV data.");
   }
 
   function downloadCsvTemplate() {
@@ -1499,7 +1698,7 @@ function App() {
           </p>
           {!hasEnoughRealEtfData && (
             <p className="signal-note loss">
-              Real candle warning: ETF backtests are using simulated/bundled data until CSV candles are loaded for{" "}
+              Real candle warning: ETF backtests are using simulated/bundled data until CSV/API candles are loaded for{" "}
               {recoveryWatchlist.join(", ")}. Do not trust paper gains as strategy proof yet.
             </p>
           )}
@@ -1852,14 +2051,14 @@ function App() {
               <div className="brief-item opportunity-item" key={`${opportunity.category}-${opportunity.symbol}`}>
                 <span
                   className={
-                    opportunity.hasCsvData || opportunity.scannerResult?.score >= 75
+                      opportunity.hasRealData || opportunity.scannerResult?.score >= 75
                       ? "checkmark"
                       : opportunity.hasTradableSymbol
                         ? "pill hold compact-pill"
                         : "xmark"
                   }
                 >
-                  {opportunity.hasCsvData || opportunity.scannerResult?.score >= 75
+                  {opportunity.hasRealData || opportunity.scannerResult?.score >= 75
                     ? "✓"
                     : opportunity.hasTradableSymbol
                       ? "?"
@@ -2248,14 +2447,44 @@ function App() {
         <div className="card-header">
           <h2>Update Market Data</h2>
           <div className="quick-actions">
+            <button type="button" className="secondary mini" onClick={refreshApiCandles} disabled={apiLoading}>
+              {apiLoading ? "Updating..." : "Update 1-Min API"}
+            </button>
             <button type="button" className="secondary mini" onClick={downloadCsvTemplate}>
               CSV Template
             </button>
             <button type="button" className="secondary danger" onClick={clearUploadedData}>
               Clear Uploads
             </button>
+            <button type="button" className="secondary danger" onClick={clearApiCandles}>
+              Clear API Cache
+            </button>
           </div>
         </div>
+        <div className="form-row">
+          <label>
+            Polygon API Key
+            <input
+              type="password"
+              value={polygonApiKey}
+              placeholder="Paste free Polygon key here"
+              onChange={(event) => setPolygonApiKey(event.target.value)}
+            />
+          </label>
+          <label>
+            API Candle Window
+            <select value={apiLookbackDays} onChange={(event) => setApiLookbackDays(Number(event.target.value))}>
+              <option value={2}>1-minute bars · 2 days</option>
+              <option value={5}>1-minute bars · 5 days</option>
+              <option value={10}>1-minute bars · 10 days</option>
+            </select>
+          </label>
+        </div>
+        <p className="signal-note">
+          API mode fetches 1-minute Polygon candles for <strong>{apiUpdateWatchlist.join(", ")}</strong> and caches
+          them in this browser. Free keys are rate-limited; use this before market open or when you need a fresh
+          paper-test update.
+        </p>
         <div className="upload-row">
           <label className="file-picker">
             Upload Required ETF CSVs
@@ -2263,7 +2492,7 @@ function App() {
           </label>
           <p className="signal-note">
             Upload <strong>SPY.csv, QQQ.csv, DIA.csv, and IWM.csv</strong>. Required columns:
-            date, open, high, low, close, volume. Uploaded data stays in this browser.
+            date, open, high, low, close, volume. Uploaded data stays in this browser as a fallback.
           </p>
         </div>
         <div className="brief-list">
@@ -2275,8 +2504,8 @@ function App() {
                   {item.symbol} · {item.ready ? "ready" : "needed"}
                 </strong>
                 <small>
-                  Source {item.source}; rows {item.rows}; latest {item.lastDate || "-"}.
-                  {item.ready ? " Meets real-data requirement." : " Needs at least 60 real CSV rows."}
+                  Source {item.source}; interval {item.interval}; rows {item.rows}; latest {item.lastDate || "-"}.
+                  {item.ready ? " Meets real-data requirement." : " Needs at least 60 real CSV/API rows."}
                 </small>
               </span>
             </div>
@@ -2284,7 +2513,7 @@ function App() {
         </div>
         {!hasEnoughRealEtfData && (
           <p className="signal-note loss">
-            Automation will block new entries until these ETF CSVs are loaded: {missingRequiredEtfs.join(", ")}.
+            Automation will block new entries until these ETF CSV/API candles are loaded: {missingRequiredEtfs.join(", ")}.
           </p>
         )}
       </section>
@@ -3289,11 +3518,11 @@ function App() {
         <div className="card-header">
           <h2>Data Sources</h2>
           <span className={`pill ${hasEnoughRealEtfData ? "buy" : "hold"}`}>
-            {hasEnoughRealEtfData ? "csv ready" : "needs csv"}
+            {hasEnoughRealEtfData ? "real ready" : "needs data"}
           </span>
         </div>
         <p className="signal-note">
-          Recovery ETF candle coverage: <strong>{realEtfDataCount}/{recoveryWatchlist.length}</strong>. Load CSV
+          Recovery ETF candle coverage: <strong>{realEtfDataCount}/{recoveryWatchlist.length}</strong>. Load CSV/API
           candles for {recoveryWatchlist.join(", ")} before trusting backtests.
         </p>
         <table>
@@ -3301,6 +3530,7 @@ function App() {
             <tr>
               <th>Symbol</th>
               <th>Source</th>
+              <th>Interval</th>
               <th>Rows</th>
               <th>First Date</th>
               <th>Last Date</th>
@@ -3311,10 +3541,11 @@ function App() {
               <tr key={item.symbol}>
                 <td>{item.symbol}</td>
                 <td>
-                  <span className={`pill ${item.source === "csv" ? "buy" : "hold"}`}>
+                  <span className={`pill ${realDataSources.includes(item.source) ? "buy" : "hold"}`}>
                     {item.source}
                   </span>
                 </td>
+                <td>{item.interval || "-"}</td>
                 <td>{item.rows}</td>
                 <td>{item.firstDate || "-"}</td>
                 <td>{item.lastDate || "-"}</td>
