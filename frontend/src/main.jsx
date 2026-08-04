@@ -2470,6 +2470,10 @@ function App() {
               placeholder="Paste free Polygon key here"
               onChange={(event) => setPolygonApiKey(event.target.value)}
             />
+            <small>
+              Status: <strong>{polygonApiKey.trim() ? "key saved in this browser" : "no key yet"}</strong>. Get a
+              free key from Polygon/Massive, paste it here, then update 1-minute candles.
+            </small>
           </label>
           <label>
             API Candle Window
@@ -2483,7 +2487,7 @@ function App() {
         <p className="signal-note">
           API mode fetches 1-minute Polygon candles for <strong>{apiUpdateWatchlist.join(", ")}</strong> and caches
           them in this browser. Free keys are rate-limited; use this before market open or when you need a fresh
-          paper-test update.
+          paper-test update. If API refresh fails, the bot keeps using uploaded or bundled CSV fallback data.
         </p>
         <div className="upload-row">
           <label className="file-picker">
@@ -2886,7 +2890,7 @@ function App() {
                 {strategies.find((strategy) => strategy.id === backtest?.config?.strategy)?.name ||
                   "Strategy"}
               </span>
-              <span className={`pill ${backtest?.data?.source === "csv" ? "buy" : "hold"}`}>
+              <span className={`pill ${realDataSources.includes(backtest?.data?.source) ? "buy" : "hold"}`}>
                 {backtest?.data?.source || "simulated"}
               </span>
               <span className={`pill ${currentEvaluation.verdict === "qualified" ? "buy" : "hold"}`}>
@@ -3257,7 +3261,7 @@ function App() {
                 <td>{result.summary.protectedHalts}</td>
                 <td>{result.summary.totalTrades}</td>
                 <td>
-                  <span className={`pill ${result.data.source === "csv" ? "buy" : "hold"}`}>
+                  <span className={`pill ${realDataSources.includes(result.data.source) ? "buy" : "hold"}`}>
                     {result.data.source}
                   </span>
                 </td>

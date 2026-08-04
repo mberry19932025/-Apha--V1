@@ -1,9 +1,10 @@
 export const projectCapabilities = [
   "Static browser deployment with no paid backend",
-  "Bundled real daily CSV data for the core watchlist",
-  "Browser CSV upload for manual data refreshes",
+  "Bundled real daily CSV data for the core ETF watchlist",
+  "Browser CSV upload and Polygon 1-minute API refreshes for manual data updates",
   "Paper portfolio saved in browser storage",
   "Scanner, backtester, strategy comparison, and paper order ticket",
+  "Polygon 1-minute candle updater for SPY, QQQ, DIA, and IWM",
   "Trader training library based on recent top fund behavior and academic strategy evidence",
   "Backtest slippage and commission assumptions",
   "1-3% trade-target discipline scoring",
@@ -15,9 +16,16 @@ export const projectCapabilities = [
 
 export const projectTests = [
   {
-    id: "csv-watchlist",
-    label: "All six watchlist symbols have CSV data",
-    run: ({ dataStatus }) => dataStatus.length === 6 && dataStatus.every((item) => item.source === "csv")
+    id: "core-real-data",
+    label: "Core ETFs have real CSV/API candle data",
+    run: ({ dataStatus }) => {
+      const realSources = ["csv", "api-1min", "api-daily"];
+      const coreSymbols = ["SPY", "QQQ", "DIA", "IWM"];
+      return coreSymbols.every((symbol) => {
+        const item = dataStatus.find((status) => status.symbol === symbol);
+        return realSources.includes(item?.source) && Number(item?.rows || 0) >= 60;
+      });
+    }
   },
   {
     id: "strategy-count",
