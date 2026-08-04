@@ -334,6 +334,10 @@ function App() {
     [backtest, currentEvaluation, dataStatus, learningSummary, portfolio, readiness, scanner, strategyComparison]
   );
   const passedTests = selfTests.filter((test) => test.passed).length;
+  const realEtfDataCount = dataStatus.filter(
+    (item) => recoveryWatchlist.includes(item.symbol) && item.source === "csv" && item.rows >= 60
+  ).length;
+  const hasEnoughRealEtfData = realEtfDataCount >= recoveryWatchlist.length;
   const effectiveAutomationMode =
     beginnerSafeMode && portfolio.totalReturn <= 0 ? "moderate" : automationMode;
   const beginnerOptionsBlocked = beginnerSafeMode && portfolio.totalReturn <= 0;
@@ -427,6 +431,29 @@ function App() {
   useEffect(() => {
     setSessionPeakEquity((current) => Math.max(current, portfolio.equity));
   }, [portfolio.equity]);
+
+  useEffect(() => {
+    if (!portfolio.positions.length) {
+      return;
+    }
+
+    setPortfolioState((current) => {
+      let changed = false;
+      const nextPositions = { ...(current.positions || {}) };
+      portfolio.positions.forEach((position) => {
+        const stored = nextPositions[position.symbol];
+        if (!stored) {
+          return;
+        }
+        const nextPeak = Math.max(Number(stored.peakPnlPercent || 0), Number(position.peakPnlPercent || 0));
+        if (nextPeak !== Number(stored.peakPnlPercent || 0)) {
+          nextPositions[position.symbol] = { ...stored, peakPnlPercent: nextPeak };
+          changed = true;
+        }
+      });
+      return changed ? { ...current, positions: nextPositions } : current;
+    });
+  }, [portfolio.positions]);
 
   useEffect(() => {
     localStorage.setItem(sessionPeakEquityKey, String(sessionPeakEquity));
@@ -1292,6 +1319,21 @@ function App() {
             {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
             {automationPlan.reason} · effective mode <strong>{effectiveAutomationMode}</strong>
           </p>
+          <p className="signal-note">
+            Market regime: <strong>{automationPlan.marketRegime?.regime || "checking"}</strong> ·{" "}
+            {automationPlan.marketRegime?.reason || "Waiting for ETF scanner."} Strongest ETF:{" "}
+            <strong>
+              {automationPlan.marketRegime?.strongestEtf
+                ? `${automationPlan.marketRegime.strongestEtf.symbol} · ${automationPlan.marketRegime.strongestEtf.score}`
+                : "n/a"}
+            </strong>
+          </p>
+          {!hasEnoughRealEtfData && (
+            <p className="signal-note loss">
+              Real candle warning: ETF backtests are using simulated/bundled data until CSV candles are loaded for{" "}
+              {recoveryWatchlist.join(", ")}. Do not trust paper gains as strategy proof yet.
+            </p>
+          )}
           <p className="signal-note">
             Decision window: <strong>{decisionWindowMinutes} minute(s)</strong> · new entries{" "}
             <strong>{automationPlan.decisionWindow?.canOpenNewTrade ? "allowed now" : "waiting"}</strong>
@@ -2991,7 +3033,16 @@ function App() {
       </section>
 
       <section className="card data-card">
-        <h2>Data Sources</h2>
+        <div className="card-header">
+          <h2>Data Sources</h2>
+          <span className={`pill ${hasEnoughRealEtfData ? "buy" : "hold"}`}>
+            {hasEnoughRealEtfData ? "csv ready" : "needs csv"}
+          </span>
+        </div>
+        <p className="signal-note">
+          Recovery ETF candle coverage: <strong>{realEtfDataCount}/{recoveryWatchlist.length}</strong>. Load CSV
+          candles for {recoveryWatchlist.join(", ")} before trusting backtests.
+        </p>
         <table>
           <thead>
             <tr>

@@ -768,6 +768,59 @@ function getLearningAdjustment(learningMemory = {}, { symbol, strategy, assetTyp
   return round(symbolAdjustment * 0.5 + strategyAdjustment * 0.35 + assetAdjustment * 0.15, 1);
 }
 
+export function evaluateMarketRegime(scannerResults = []) {
+  const etfResults = (scannerResults || []).filter((result) => assetCatalog.etfs.includes(result.symbol));
+  const bullishEtfs = etfResults.filter((result) => result.action === "buy" && Number(result.score || 0) >= 70);
+  const bearishEtfs = etfResults.filter((result) => result.action === "sell");
+  const averageScore = etfResults.length
+    ? etfResults.reduce((sum, result) => sum + Number(result.score || 0), 0) / etfResults.length
+    : 0;
+  const extremeVolatility = etfResults.some((result) => result.intelligence?.volatilityRegime === "extreme");
+  const highVolatilityCount = etfResults.filter((result) =>
+    ["high", "extreme"].includes(result.intelligence?.volatilityRegime)
+  ).length;
+  const strongestEtf = [...etfResults].sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
+  let regime = "neutral";
+  let tradePermission = "selective";
+  let reason = "ETF signals are mixed. Require normal score, liquidity, and volatility confirmation.";
+
+  if (extremeVolatility) {
+    regime = "high-volatility";
+    tradePermission = "defensive";
+    reason = "Extreme ETF volatility detected. New entries require exceptional confirmation.";
+  } else if (bullishEtfs.length >= 3 && averageScore >= 74) {
+    regime = "trend-up";
+    tradePermission = "allowed";
+    reason = "Broad ETF trend is positive across multiple indexes.";
+  } else if (bearishEtfs.length >= 2 || averageScore < 58) {
+    regime = "risk-off";
+    tradePermission = "blocked";
+    reason = "ETF trend is weak or bearish. Avoid new entries.";
+  } else if (highVolatilityCount >= 2) {
+    regime = "choppy";
+    tradePermission = "selective";
+    reason = "Multiple ETFs show elevated volatility. Trade only the strongest liquid ETF.";
+  }
+
+  return {
+    regime,
+    tradePermission,
+    reason,
+    averageScore: round(averageScore, 1),
+    bullishEtfs: bullishEtfs.map((result) => result.symbol),
+    bearishEtfs: bearishEtfs.map((result) => result.symbol),
+    strongestEtf: strongestEtf
+      ? {
+          symbol: strongestEtf.symbol,
+          score: strongestEtf.score,
+          action: strongestEtf.action,
+          volatility: strongestEtf.intelligence?.volatilityRegime || "unknown",
+          liquidity: strongestEtf.intelligence?.liquidityGrade || "unknown"
+        }
+      : null
+  };
+}
+
 export function getAdaptiveRiskSettings(portfolio = {}, mode = "moderate") {
   const equity = Number(portfolio.equity || portfolio.startingCash || 3000);
   const startingCash = Number(portfolio.startingCash || 3000);
@@ -967,6 +1020,7 @@ export function evaluateAutomationPlan({
     remainingEntries: Math.max(0, Math.max(1, Math.min(20, Number(maxTradesPerDay || 3))) - todayEntryCount),
     reached: todayEntryCount >= Math.max(1, Math.min(20, Number(maxTradesPerDay || 3)))
   };
+  const marketRegime = evaluateMarketRegime(scanner?.results || []);
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
   const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 70 : 76;
@@ -1020,6 +1074,7 @@ export function evaluateAutomationPlan({
         learningAdjustment
       };
     });
+  const strongestTradableEtfSymbol = marketRegime.strongestEtf?.symbol || null;
   const optionsIdeas = buildOptionsIdeas(scanner?.results || []);
   const bestOptionIdea = optionsIdeas
     .filter((idea) => allowedSymbols.has(idea.underlying))
@@ -1047,6 +1102,11 @@ export function evaluateAutomationPlan({
         );
       })
     : null;
+  const breakevenExit = (portfolio?.positions || []).find((position) => {
+    const pnlPercent = Number(position.unrealizedPnlPercent || 0);
+    const peakPnlPercent = Number(position.peakPnlPercent || position.unrealizedPnlPercent || 0);
+    return allowedSymbols.has(position.symbol) && peakPnlPercent >= 0.35 && pnlPercent <= 0.05;
+  });
   const existingSell = candidates.find(
     (result) => result.action === "sell" && positions.has(result.symbol)
   );
@@ -1263,6 +1323,24 @@ export function evaluateAutomationPlan({
     };
   }
 
+  if (breakevenExit) {
+    return {
+      action: "sell",
+      symbol: breakevenExit.symbol,
+      quantity: breakevenExit.quantity,
+      reason: `Breakeven guard: ${breakevenExit.symbol} was up ${round(Number(breakevenExit.peakPnlPercent || 0), 2)}% and faded near flat. Exit before it turns into a loss.`,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      decisionWindow,
+      dailyTradeLimit,
+      marketRegime
+    };
+  }
+
   if (existingSell) {
     const position = positions.get(existingSell.symbol);
     return {
@@ -1290,7 +1368,24 @@ export function evaluateAutomationPlan({
       futuresPolicy,
       adaptiveRisk,
       decisionWindow,
-      dailyTradeLimit
+      dailyTradeLimit,
+      marketRegime
+    };
+  }
+
+  if (marketRegime.tradePermission === "blocked") {
+    return {
+      action: "hold",
+      reason: `Market regime hold: ${marketRegime.reason}`,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      decisionWindow,
+      dailyTradeLimit,
+      marketRegime
     };
   }
 
@@ -1305,7 +1400,8 @@ export function evaluateAutomationPlan({
       futuresPolicy,
       adaptiveRisk,
       decisionWindow,
-      dailyTradeLimit
+      dailyTradeLimit,
+      marketRegime
     };
   }
 
@@ -1325,7 +1421,8 @@ export function evaluateAutomationPlan({
       futuresPolicy,
       adaptiveRisk,
       decisionWindow,
-      dailyTradeLimit
+      dailyTradeLimit,
+      marketRegime
     };
   }
 
@@ -1338,6 +1435,8 @@ export function evaluateAutomationPlan({
     );
     return (
       result.action === "buy" &&
+      assetCatalog.etfs.includes(result.symbol) &&
+      (!strongestTradableEtfSymbol || result.symbol === strongestTradableEtfSymbol) &&
       result.score >= minBuyScore &&
       strategyScore >= (adaptiveRisk.returnPercent < 0 ? 72 : mode === "bullish" ? 64 : 68) &&
       !positions.has(result.symbol) &&
@@ -1378,7 +1477,8 @@ export function evaluateAutomationPlan({
         futuresPolicy,
         adaptiveRisk,
         decisionWindow,
-        dailyTradeLimit
+        dailyTradeLimit,
+        marketRegime
       };
     }
 
@@ -1403,7 +1503,8 @@ export function evaluateAutomationPlan({
       futuresPolicy,
       adaptiveRisk,
       decisionWindow,
-      dailyTradeLimit
+      dailyTradeLimit,
+      marketRegime
     };
   }
 
@@ -1495,7 +1596,8 @@ export function evaluateAutomationPlan({
     futuresPolicy,
     adaptiveRisk,
     decisionWindow,
-    dailyTradeLimit
+    dailyTradeLimit,
+    marketRegime
   };
 }
 
@@ -2186,6 +2288,10 @@ export function buildPortfolio(state, market) {
     const quote = market.find((item) => item.symbol === symbol);
     const marketValue = quote ? quote.price * position.quantity : 0;
     const unrealizedPnl = marketValue - position.averagePrice * position.quantity;
+    const unrealizedPnlPercent = position.averagePrice
+      ? round((unrealizedPnl / (position.averagePrice * position.quantity)) * 100, 2)
+      : 0;
+    const peakPnlPercent = Math.max(Number(position.peakPnlPercent || 0), unrealizedPnlPercent);
 
     return {
       symbol,
@@ -2194,9 +2300,8 @@ export function buildPortfolio(state, market) {
       marketPrice: quote?.price ?? null,
       marketValue: round(marketValue),
       unrealizedPnl: round(unrealizedPnl),
-      unrealizedPnlPercent: position.averagePrice
-        ? round((unrealizedPnl / (position.averagePrice * position.quantity)) * 100, 2)
-        : 0,
+      unrealizedPnlPercent,
+      peakPnlPercent,
       openedAt: position.openedAt || null
     };
   });
