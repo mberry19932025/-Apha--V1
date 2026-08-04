@@ -831,8 +831,8 @@ export function getAdaptiveRiskSettings(portfolio = {}, mode = "moderate") {
   const returnPercent = startingCash ? ((equity - startingCash) / startingCash) * 100 : 0;
   const drawdownFromStartPercent = startingCash ? Math.max(0, ((startingCash - equity) / startingCash) * 100) : 0;
   const isSmallAccount = startingCash <= 1500;
-  const baseSingleTradeCashPercent = mode === "bullish" ? 0.18 : 0.1;
-  const baseMaxExposurePercent = mode === "bullish" ? 38 : 22;
+  const baseSingleTradeCashPercent = mode === "bullish" ? 0.14 : 0.1;
+  const baseMaxExposurePercent = mode === "bullish" ? 30 : 22;
   let riskMultiplier = 1;
 
   if (isSmallAccount) {
@@ -863,6 +863,57 @@ export function getAdaptiveRiskSettings(portfolio = {}, mode = "moderate") {
     live1000Equivalent: {
       maxSingleTradeDollars: round(1000 * baseSingleTradeCashPercent * riskMultiplier),
       maxTotalExposureDollars: round(1000 * (baseMaxExposurePercent / 100) * Math.min(1, riskMultiplier))
+    }
+  };
+}
+
+function evaluateBullishDiscipline({
+  mode,
+  adaptiveRisk,
+  marketRegime,
+  hasRequiredRealData,
+  decisionWindow,
+  dailyTradeLimit,
+  portfolio
+} = {}) {
+  if (mode !== "bullish") {
+    return {
+      active: false,
+      passed: true,
+      label: "Moderate discipline active.",
+      failedRules: []
+    };
+  }
+
+  const failedRules = [];
+  const equityGreen = Number(adaptiveRisk?.returnPercent || 0) >= 0;
+  const broadTrendUp = marketRegime?.regime === "trend-up" && marketRegime?.tradePermission === "allowed";
+  const strongestScore = Number(marketRegime?.strongestEtf?.score || 0);
+  const bullishBreadth = Number(marketRegime?.bullishEtfs?.length || 0);
+  const exposure = Number(portfolio?.exposurePercent || 0);
+
+  if (!hasRequiredRealData) failedRules.push("real CSV/API ETF data required");
+  if (!equityGreen) failedRules.push("account must be green");
+  if (!broadTrendUp) failedRules.push("market regime must be trend-up");
+  if (strongestScore < 78) failedRules.push("strongest ETF score must be 78+");
+  if (bullishBreadth < 2) failedRules.push("at least two core ETFs must be bullish");
+  if (exposure > 20) failedRules.push("current exposure must be 20% or lower before adding risk");
+  if (Number(decisionWindow?.windowMinutes || 0) < 5) failedRules.push("entry window must be at least 5 minutes");
+  if (Number(dailyTradeLimit?.maxTradesPerDay || 0) > 3) failedRules.push("max entries must stay at 3 or lower");
+
+  return {
+    active: true,
+    passed: failedRules.length === 0,
+    label: failedRules.length
+      ? `Bullish discipline blocked: ${failedRules.join("; ")}.`
+      : "Bullish discipline passed: broad trend, real data, exposure, and score checks confirm risk-on.",
+    failedRules,
+    required: {
+      strongestEtfScore: 78,
+      bullishEtfCount: 2,
+      maxExposurePercentBeforeEntry: 20,
+      minimumDecisionWindowMinutes: 5,
+      maxEntriesPerDay: 3
     }
   };
 }
@@ -1027,9 +1078,19 @@ export function evaluateAutomationPlan({
     reached: todayEntryCount >= Math.max(1, Math.min(20, Number(maxTradesPerDay || 3)))
   };
   const marketRegime = evaluateMarketRegime(scanner?.results || []);
+  const bullishDiscipline = evaluateBullishDiscipline({
+    mode,
+    adaptiveRisk,
+    marketRegime,
+    hasRequiredRealData,
+    decisionWindow,
+    dailyTradeLimit,
+    portfolio
+  });
   const noTradeIntelligence = {
     realDataRequired,
     hasRequiredRealData,
+    bullishDiscipline,
     blockedReasons: []
   };
   if (realDataRequired && !hasRequiredRealData) {
@@ -1041,10 +1102,13 @@ export function evaluateAutomationPlan({
   if (adaptiveRisk.returnPercent < 0) {
     noTradeIntelligence.blockedReasons.push("Account is red; capital recovery mode blocks new entries.");
   }
+  if (bullishDiscipline.active && !bullishDiscipline.passed) {
+    noTradeIntelligence.blockedReasons.push(bullishDiscipline.label);
+  }
   noTradeIntelligence.canOpenNewEntry = noTradeIntelligence.blockedReasons.length === 0;
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
-  const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 70 : 76;
+  const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 80 : 76;
   const positions = new Map((portfolio?.positions || []).map((position) => [position.symbol, position]));
   const sessionProfit = Number(sessionPeakEquity || portfolio?.equity || 0) - Number(portfolio?.startingCash || 0);
   const currentProfit = Number(portfolio?.equity || 0) - Number(portfolio?.startingCash || 0);
@@ -1434,6 +1498,23 @@ export function evaluateAutomationPlan({
     };
   }
 
+  if (bullishDiscipline.active && !bullishDiscipline.passed) {
+    return {
+      action: "hold",
+      reason: bullishDiscipline.label,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      decisionWindow,
+      dailyTradeLimit,
+      marketRegime,
+      noTradeIntelligence
+    };
+  }
+
   if (dailyTradeLimit.reached) {
     return {
       action: "hold",
@@ -1485,16 +1566,16 @@ export function evaluateAutomationPlan({
       assetCatalog.etfs.includes(result.symbol) &&
       (!strongestTradableEtfSymbol || result.symbol === strongestTradableEtfSymbol) &&
       result.score >= minBuyScore &&
-      strategyScore >= (adaptiveRisk.returnPercent < 0 ? 72 : mode === "bullish" ? 64 : 68) &&
+      strategyScore >= (adaptiveRisk.returnPercent < 0 ? 72 : mode === "bullish" ? 74 : 68) &&
       !positions.has(result.symbol) &&
       result.intelligence?.liquidityGrade !== "avoid" &&
       result.intelligence?.volatilityRegime !== "extreme" &&
-      flags.length <= (mode === "bullish" ? 1 : 0)
+      flags.length === 0
     );
   });
 
   if (!buyCandidate) {
-    const futuresCandidate = futuresEnabled && futuresAllowedByClock && futuresPolicy.canTradeFutures && adaptiveRisk.returnPercent >= 0
+    const futuresCandidate = futuresEnabled && futuresAllowedByClock && futuresPolicy.canTradeFutures && adaptiveRisk.returnPercent >= 0 && (!bullishDiscipline.active || bullishDiscipline.passed)
       ? candidates.find((result) => {
           const selectedStrategy = strategyMap[result.symbol];
           const strategyScore = Math.max(
@@ -1504,8 +1585,8 @@ export function evaluateAutomationPlan({
           return (
             assetCatalog.futures.includes(result.symbol) &&
             result.action === "buy" &&
-            result.score >= (mode === "bullish" ? 66 : 72) &&
-            strategyScore >= (mode === "bullish" ? 58 : 64) &&
+            result.score >= (mode === "bullish" ? 78 : 72) &&
+            strategyScore >= (mode === "bullish" ? 72 : 64) &&
             result.intelligence?.volatilityRegime !== "extreme"
           );
         })

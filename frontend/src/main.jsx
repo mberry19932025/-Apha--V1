@@ -541,7 +541,9 @@ function App() {
     !hasEnoughRealEtfData && `Missing required ETF CSV/API data: ${missingRequiredEtfs.join(", ")}`,
     emergencyStopActive && "Emergency Stop is active.",
     !beginnerSafeMode && "Beginner Safe Mode is off.",
-    effectiveAutomationMode !== "moderate" && "Effective mode is not Moderate.",
+    effectiveAutomationMode !== "moderate" &&
+      !automationPlan.noTradeIntelligence?.bullishDiscipline?.passed &&
+      "Bullish mode is selected but bullish discipline has not passed.",
     effectiveOptionsEnabled && "Options are still enabled.",
     effectiveFuturesExtendedHours && "Futures extended-hours is enabled.",
     maxTradesPerDay > 3 && "Max entries is above beginner limit.",
@@ -1696,6 +1698,19 @@ function App() {
                 : "n/a"}
             </strong>
           </p>
+          {automationPlan.noTradeIntelligence?.bullishDiscipline?.active && (
+            <p
+              className={`signal-note ${
+                automationPlan.noTradeIntelligence.bullishDiscipline.passed ? "gain" : "loss"
+              }`}
+            >
+              Bullish discipline:{" "}
+              <strong>
+                {automationPlan.noTradeIntelligence.bullishDiscipline.passed ? "passed" : "blocked"}
+              </strong>
+              . {automationPlan.noTradeIntelligence.bullishDiscipline.label}
+            </p>
+          )}
           {!hasEnoughRealEtfData && (
             <p className="signal-note loss">
               Real candle warning: ETF backtests are using simulated/bundled data until CSV/API candles are loaded for{" "}
