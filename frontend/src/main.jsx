@@ -41,6 +41,38 @@ const automationSnapshotsKey = "apex-alpha-automation-snapshots";
 const sessionPeakEquityKey = "apex-alpha-session-peak-equity";
 const emergencyStopKey = "apex-alpha-emergency-stop";
 const recoveryWatchlist = ["SPY", "DIA", "IWM", "QQQ"];
+const opportunityWatchlist = [
+  {
+    symbol: "GLD",
+    category: "Gold",
+    stance: "watch-only",
+    rule: "Only consider after fresh GLD candles are loaded and it beats the core ETF setup."
+  },
+  {
+    symbol: "MGC",
+    category: "Gold futures",
+    stance: "paper-only",
+    rule: "Micro gold futures stay blocked by Beginner Safe Mode unless extended-hours futures are intentionally enabled."
+  },
+  {
+    symbol: "MBT",
+    category: "Bitcoin futures",
+    stance: "paper-only",
+    rule: "Bitcoin is volatile; monitor trend only and do not use for small-account recovery mode."
+  },
+  {
+    symbol: "VNQ / XLRE",
+    category: "REITs",
+    stance: "research",
+    rule: "Add real candle CSVs before backtesting or trading."
+  },
+  {
+    symbol: "LIT / lithium",
+    category: "Lithium",
+    stance: "avoid for now",
+    rule: "No automation until liquidity, trend, and strategy evidence are proven."
+  }
+];
 
 function formatMoney(value) {
   return new Intl.NumberFormat("en-US", {
@@ -397,6 +429,32 @@ function App() {
       hasEnoughRealEtfData,
       sessionPeakEquity
     ]
+  );
+  const opportunitySignals = useMemo(
+    () =>
+      opportunityWatchlist.map((opportunity) => {
+        const scannerResult = scanner?.results?.find((result) => result.symbol === opportunity.symbol);
+        const dataItem = dataStatus.find((item) => item.symbol === opportunity.symbol);
+        const quote = market.find((item) => item.symbol === opportunity.symbol);
+        const hasTradableSymbol = symbols.includes(opportunity.symbol);
+        const hasCsvData = dataItem?.source === "csv" && dataItem.rows >= 60;
+        return {
+          ...opportunity,
+          scannerResult,
+          dataItem,
+          quote,
+          hasTradableSymbol,
+          hasCsvData,
+          status: !hasTradableSymbol
+            ? "not loaded"
+            : hasCsvData
+              ? "csv ready"
+              : dataItem?.source
+                ? `${dataItem.source} data`
+                : "no data"
+        };
+      }),
+    [scanner, dataStatus, market]
   );
   const startGateIssues = [
     !hasEnoughRealEtfData && `Missing required ETF CSV data: ${missingRequiredEtfs.join(", ")}`,
@@ -1777,6 +1835,51 @@ function App() {
                 <small>{assetCatalog.futures.join(", ")} · simulated margin-capped paper trades only.</small>
               </span>
             </div>
+          </div>
+        </article>
+
+        <article className="card">
+          <div className="card-header">
+            <h2>Opportunity Watchlist</h2>
+            <span className="pill hold">monitor only</span>
+          </div>
+          <p className="signal-note">
+            These are extra markets to watch for context. Automation still starts from the recovery ETFs:{" "}
+            <strong>{recoveryWatchlist.join(", ")}</strong>.
+          </p>
+          <div className="brief-list opportunity-list">
+            {opportunitySignals.map((opportunity) => (
+              <div className="brief-item opportunity-item" key={`${opportunity.category}-${opportunity.symbol}`}>
+                <span
+                  className={
+                    opportunity.hasCsvData || opportunity.scannerResult?.score >= 75
+                      ? "checkmark"
+                      : opportunity.hasTradableSymbol
+                        ? "pill hold compact-pill"
+                        : "xmark"
+                  }
+                >
+                  {opportunity.hasCsvData || opportunity.scannerResult?.score >= 75
+                    ? "✓"
+                    : opportunity.hasTradableSymbol
+                      ? "?"
+                      : "!"}
+                </span>
+                <span>
+                  <strong>
+                    {opportunity.category}: {opportunity.symbol}
+                  </strong>
+                  <small>
+                    {opportunity.stance} · {opportunity.status}
+                    {opportunity.quote?.price ? ` · quote ${formatMoney(opportunity.quote.price)}` : ""}
+                    {opportunity.scannerResult
+                      ? ` · scanner ${opportunity.scannerResult.action} ${opportunity.scannerResult.score}`
+                      : ""}
+                  </small>
+                  <small>{opportunity.rule}</small>
+                </span>
+              </div>
+            ))}
           </div>
         </article>
 
