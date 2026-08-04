@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   analyzeLearningJournal,
@@ -36,6 +36,8 @@ const portfolioKey = "apex-alpha-static-portfolio";
 const uploadedDataKey = "apex-alpha-uploaded-data";
 const apiDataKey = "apex-alpha-api-data";
 const polygonApiKeyStorageKey = "apex-alpha-polygon-api-key";
+const autoApiRefreshKey = "apex-alpha-auto-api-refresh";
+const autoStartWhenReadyKey = "apex-alpha-auto-start-ready";
 const learningJournalKey = "apex-alpha-learning-journal";
 const watchlistKey = "apex-alpha-watchlist";
 const automationLogKey = "apex-alpha-automation-log";
@@ -45,6 +47,8 @@ const emergencyStopKey = "apex-alpha-emergency-stop";
 const recoveryWatchlist = ["SPY", "DIA", "IWM", "QQQ"];
 const apiUpdateWatchlist = ["SPY", "QQQ", "DIA", "IWM"];
 const realDataSources = ["csv", "api-1min", "api-daily"];
+const autoRefreshIntervalMs = 5 * 60 * 1000;
+const autoStartMarketQualityThreshold = 70;
 const opportunityWatchlist = [
   {
     symbol: "GLD",
@@ -380,6 +384,10 @@ function App() {
   const [polygonApiKey, setPolygonApiKey] = useState(() => loadStoredString(polygonApiKeyStorageKey));
   const [apiLoading, setApiLoading] = useState(false);
   const [apiLookbackDays, setApiLookbackDays] = useState(5);
+  const [autoApiRefresh, setAutoApiRefresh] = useState(() => loadStoredBoolean(autoApiRefreshKey, true));
+  const [autoStartWhenReady, setAutoStartWhenReady] = useState(() =>
+    loadStoredBoolean(autoStartWhenReadyKey, true)
+  );
   const [market, setMarket] = useState(() => getMarketSnapshot());
   const [scanner, setScanner] = useState(null);
   const [portfolioState, setPortfolioState] = useState(loadStoredPortfolio);
@@ -444,6 +452,8 @@ function App() {
     loadStoredArray(automationSnapshotsKey, [])
   );
   const [backtest, setBacktest] = useState(null);
+  const lastAutoRefreshAt = useRef(0);
+  const lastAutoStartAt = useRef(0);
 
   const signals = useMemo(() => getSignals(market), [market]);
   const portfolio = useMemo(() => buildPortfolio(portfolioState, market), [portfolioState, market]);
@@ -743,6 +753,14 @@ function App() {
   }, [polygonApiKey]);
 
   useEffect(() => {
+    localStorage.setItem(autoApiRefreshKey, String(autoApiRefresh));
+  }, [autoApiRefresh]);
+
+  useEffect(() => {
+    localStorage.setItem(autoStartWhenReadyKey, String(autoStartWhenReady));
+  }, [autoStartWhenReady]);
+
+  useEffect(() => {
     localStorage.setItem(learningJournalKey, JSON.stringify(learningJournal));
   }, [learningJournal]);
 
@@ -854,6 +872,59 @@ function App() {
     paperLearningMemory,
     decisionWindowMinutes,
     marketClock
+  ]);
+
+  useEffect(() => {
+    if (!autoApiRefresh || !polygonApiKey.trim() || apiLoading) {
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const marketOk = marketClock.isRegularSession || effectiveFuturesExtendedHours;
+      if (!marketOk || now - lastAutoRefreshAt.current < autoRefreshIntervalMs) {
+        return;
+      }
+
+      lastAutoRefreshAt.current = now;
+      refreshApiCandles({ silent: true });
+    }, 60000);
+
+    return () => clearInterval(timer);
+  }, [autoApiRefresh, polygonApiKey, apiLoading, marketClock, effectiveFuturesExtendedHours]);
+
+  useEffect(() => {
+    if (!autoStartWhenReady || automationEnabled || emergencyStopActive || loading) {
+      return;
+    }
+
+    const marketQualityReady = Number(automationPlan.marketQuality?.score || 0) >= autoStartMarketQualityThreshold;
+    const marketOk = marketClock.isRegularSession || effectiveFuturesExtendedHours;
+    const cooldownOk = Date.now() - lastAutoStartAt.current >= 60000;
+
+    if (!startGateReady || !marketQualityReady || !marketOk || !cooldownOk) {
+      return;
+    }
+
+    lastAutoStartAt.current = Date.now();
+    setAutomationEnabled(true);
+    recordAutomation({
+      action: "auto-start",
+      symbol: "-",
+      quantity: 0,
+      reason: `Auto-started because readiness passed and market quality is ${automationPlan.marketQuality?.score}/100.`
+    });
+    setMessage(`Automation auto-started. Market quality ${automationPlan.marketQuality?.score}/100.`);
+    runAutomationCycle();
+  }, [
+    autoStartWhenReady,
+    automationEnabled,
+    emergencyStopActive,
+    loading,
+    startGateReady,
+    automationPlan,
+    marketClock,
+    effectiveFuturesExtendedHours
   ]);
 
   function syncSymbol(symbol) {
@@ -1499,11 +1570,15 @@ function App() {
     );
   }
 
-  async function refreshApiCandles() {
-    setMessage("");
+  async function refreshApiCandles({ silent = false } = {}) {
+    if (!silent) {
+      setMessage("");
+    }
 
     if (!polygonApiKey.trim()) {
-      setMessage("Add your free Polygon API key first. It stays in this browser.");
+      if (!silent) {
+        setMessage("Add your free Polygon API key first. It stays in this browser.");
+      }
       return;
     }
 
@@ -1541,13 +1616,31 @@ function App() {
       setMarket(apiMarket);
       setBacktest(runBacktest(config, mergedData));
       setScanner(scanMarket(config, mergedData, apiMarket));
-      setMessage(
-        `API candles updated: ${loaded.join(", ")}.${
-          skipped.length ? ` Skipped: ${skipped.join("; ")}.` : ""
-        } Free Polygon keys are rate-limited, so wait at least one minute before refreshing again.`
-      );
+      if (!silent) {
+        setMessage(
+          `API candles updated: ${loaded.join(", ")}.${
+            skipped.length ? ` Skipped: ${skipped.join("; ")}.` : ""
+          } Free Polygon keys are rate-limited, so wait at least one minute before refreshing again.`
+        );
+      } else {
+        recordAutomation({
+          action: "api-refresh",
+          symbol: "DATA",
+          quantity: loaded.length,
+          reason: `Auto-refreshed Polygon 1-minute candles: ${loaded.join(", ")}.`
+        });
+      }
     } catch (error) {
-      setMessage(error.message);
+      if (!silent) {
+        setMessage(error.message);
+      } else {
+        recordAutomation({
+          action: "api-refresh-failed",
+          symbol: "DATA",
+          quantity: 0,
+          reason: error.message
+        });
+      }
     } finally {
       setApiLoading(false);
     }
@@ -1799,6 +1892,22 @@ function App() {
               />
               Real Data Required
             </label>
+            <label className="inline-toggle">
+              <input
+                type="checkbox"
+                checked={autoApiRefresh}
+                onChange={(event) => setAutoApiRefresh(event.target.checked)}
+              />
+              Auto-refresh Polygon every 5m
+            </label>
+            <label className="inline-toggle">
+              <input
+                type="checkbox"
+                checked={autoStartWhenReady}
+                onChange={(event) => setAutoStartWhenReady(event.target.checked)}
+              />
+              Auto-start when ready
+            </label>
           </div>
           <p className="signal-note">
             Beginner Safe Mode: <strong>{beginnerSafeMode ? "on" : "off"}</strong> ·{" "}
@@ -1864,7 +1973,8 @@ function App() {
             }`}
           >
             Market quality: <strong>{automationPlan.marketQuality?.score ?? 0}/100</strong> ·{" "}
-            {automationPlan.marketQuality?.reason || "Waiting for core ETF scanner data."}
+            {automationPlan.marketQuality?.reason || "Waiting for core ETF scanner data."} Auto-start requires{" "}
+            <strong>{autoStartMarketQualityThreshold}+</strong>.
           </p>
           {automationPlan.noTradeIntelligence?.bullishDiscipline?.active && (
             <p
@@ -2678,6 +2788,10 @@ function App() {
           API mode fetches 1-minute Polygon candles for <strong>{apiUpdateWatchlist.join(", ")}</strong> and caches
           them in this browser. Free keys are rate-limited; use this before market open or when you need a fresh
           paper-test update. If API refresh fails, the bot keeps using uploaded or bundled CSV fallback data.
+          <br />
+          Auto-refresh is <strong>{autoApiRefresh ? "on" : "off"}</strong>; auto-start is{" "}
+          <strong>{autoStartWhenReady ? "on" : "off"}</strong>. Auto-start only fires when the readiness gate passes
+          and market quality is at least <strong>{autoStartMarketQualityThreshold}/100</strong>.
         </p>
         <div className="upload-row">
           <label className="file-picker">
