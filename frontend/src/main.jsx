@@ -199,6 +199,7 @@ function App() {
   const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(false);
   const [decisionWindowMinutes, setDecisionWindowMinutes] = useState(5);
   const [maxTradesPerDay, setMaxTradesPerDay] = useState(3);
+  const [realDataRequired, setRealDataRequired] = useState(true);
   const [marketClock, setMarketClock] = useState(() => getMarketClock());
   const [marketCloseSnapshotSaved, setMarketCloseSnapshotSaved] = useState(false);
   const [sessionPeakEquity, setSessionPeakEquity] = useState(() =>
@@ -360,6 +361,8 @@ function App() {
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
         decisionWindowMinutes,
         maxTradesPerDay,
+        realDataRequired,
+        hasRequiredRealData: hasEnoughRealEtfData,
         sessionPeakEquity
       }),
     [
@@ -376,6 +379,8 @@ function App() {
       effectiveFuturesExtendedHours,
       decisionWindowMinutes,
       maxTradesPerDay,
+      realDataRequired,
+      hasEnoughRealEtfData,
       sessionPeakEquity
     ]
   );
@@ -637,6 +642,7 @@ function App() {
     setAllowFuturesExtendedHours(false);
     setDecisionWindowMinutes(5);
     setMaxTradesPerDay(3);
+    setRealDataRequired(true);
     setWatchlist(recoveryWatchlist);
     recordAutomation({
       action: "recovery-preset",
@@ -834,6 +840,8 @@ function App() {
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
         decisionWindowMinutes,
         maxTradesPerDay,
+        realDataRequired,
+        hasRequiredRealData: hasEnoughRealEtfData,
         sessionPeakEquity
       });
 
@@ -1299,6 +1307,14 @@ function App() {
               />
               Allow futures extended-hours paper cycles
             </label>
+            <label className="inline-toggle">
+              <input
+                type="checkbox"
+                checked={realDataRequired}
+                onChange={(event) => setRealDataRequired(event.target.checked)}
+              />
+              Real Data Required
+            </label>
           </div>
           <p className="signal-note">
             Beginner Safe Mode: <strong>{beginnerSafeMode ? "on" : "off"}</strong> ·{" "}
@@ -1334,6 +1350,18 @@ function App() {
               {recoveryWatchlist.join(", ")}. Do not trust paper gains as strategy proof yet.
             </p>
           )}
+          <p className="signal-note">
+            No-trade intelligence:{" "}
+            <strong>{automationPlan.noTradeIntelligence?.canOpenNewEntry ? "clear" : "blocking new entries"}</strong>
+            {automationPlan.noTradeIntelligence?.blockedReasons?.length ? (
+              <>
+                {" "}
+                · {automationPlan.noTradeIntelligence.blockedReasons.join(" ")}
+              </>
+            ) : (
+              " · required checks passed."
+            )}
+          </p>
           <p className="signal-note">
             Decision window: <strong>{decisionWindowMinutes} minute(s)</strong> · new entries{" "}
             <strong>{automationPlan.decisionWindow?.canOpenNewTrade ? "allowed now" : "waiting"}</strong>

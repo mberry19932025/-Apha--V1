@@ -996,6 +996,8 @@ export function evaluateAutomationPlan({
   allowFuturesExtendedHours = false,
   decisionWindowMinutes = 5,
   maxTradesPerDay = 3,
+  realDataRequired = true,
+  hasRequiredRealData = false,
   sessionPeakEquity = portfolio?.equity
 } = {}) {
   const profile = riskProfiles.find((item) => item.id === mode) || riskProfiles.find((item) => item.id === "moderate");
@@ -1021,6 +1023,21 @@ export function evaluateAutomationPlan({
     reached: todayEntryCount >= Math.max(1, Math.min(20, Number(maxTradesPerDay || 3)))
   };
   const marketRegime = evaluateMarketRegime(scanner?.results || []);
+  const noTradeIntelligence = {
+    realDataRequired,
+    hasRequiredRealData,
+    blockedReasons: []
+  };
+  if (realDataRequired && !hasRequiredRealData) {
+    noTradeIntelligence.blockedReasons.push("Real ETF CSV candle data is required before new entries.");
+  }
+  if (marketRegime.tradePermission === "blocked") {
+    noTradeIntelligence.blockedReasons.push(marketRegime.reason);
+  }
+  if (adaptiveRisk.returnPercent < 0) {
+    noTradeIntelligence.blockedReasons.push("Account is red; capital recovery mode blocks new entries.");
+  }
+  noTradeIntelligence.canOpenNewEntry = noTradeIntelligence.blockedReasons.length === 0;
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
   const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 70 : 76;
@@ -1337,7 +1354,8 @@ export function evaluateAutomationPlan({
       adaptiveRisk,
       decisionWindow,
       dailyTradeLimit,
-      marketRegime
+      marketRegime,
+      noTradeIntelligence
     };
   }
 
@@ -1353,7 +1371,28 @@ export function evaluateAutomationPlan({
       categoryRanks,
       bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
       futuresPolicy,
-      adaptiveRisk
+      adaptiveRisk,
+      decisionWindow,
+      dailyTradeLimit,
+      marketRegime,
+      noTradeIntelligence
+    };
+  }
+
+  if (realDataRequired && !hasRequiredRealData) {
+    return {
+      action: "hold",
+      reason: "Real data required mode: load CSV candles for SPY, DIA, IWM, and QQQ before allowing new entries.",
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      decisionWindow,
+      dailyTradeLimit,
+      marketRegime,
+      noTradeIntelligence
     };
   }
 
@@ -1369,7 +1408,8 @@ export function evaluateAutomationPlan({
       adaptiveRisk,
       decisionWindow,
       dailyTradeLimit,
-      marketRegime
+      marketRegime,
+      noTradeIntelligence
     };
   }
 
@@ -1385,7 +1425,8 @@ export function evaluateAutomationPlan({
       adaptiveRisk,
       decisionWindow,
       dailyTradeLimit,
-      marketRegime
+      marketRegime,
+      noTradeIntelligence
     };
   }
 
@@ -1401,7 +1442,8 @@ export function evaluateAutomationPlan({
       adaptiveRisk,
       decisionWindow,
       dailyTradeLimit,
-      marketRegime
+      marketRegime,
+      noTradeIntelligence
     };
   }
 
@@ -1422,7 +1464,8 @@ export function evaluateAutomationPlan({
       adaptiveRisk,
       decisionWindow,
       dailyTradeLimit,
-      marketRegime
+      marketRegime,
+      noTradeIntelligence
     };
   }
 
@@ -1519,7 +1562,9 @@ export function evaluateAutomationPlan({
       futuresPolicy,
       adaptiveRisk,
       decisionWindow,
-      dailyTradeLimit
+      dailyTradeLimit,
+      marketRegime,
+      noTradeIntelligence
     };
   }
 
@@ -1530,6 +1575,7 @@ export function evaluateAutomationPlan({
   if (quantity < 1) {
       const optionFallback =
       optionsEnabled &&
+      !realDataRequired &&
       adaptiveRisk.returnPercent >= 0 &&
       bestOptionIdea &&
       bestOptionIdea.stance !== "hold" &&
@@ -1549,7 +1595,9 @@ export function evaluateAutomationPlan({
         futuresPolicy,
         adaptiveRisk,
         decisionWindow,
-        dailyTradeLimit
+        dailyTradeLimit,
+        marketRegime,
+        noTradeIntelligence
       };
     }
 
@@ -1578,7 +1626,9 @@ export function evaluateAutomationPlan({
       futuresPolicy,
       adaptiveRisk,
       decisionWindow,
-      dailyTradeLimit
+      dailyTradeLimit,
+      marketRegime,
+      noTradeIntelligence
     };
   }
 
@@ -1597,7 +1647,8 @@ export function evaluateAutomationPlan({
     adaptiveRisk,
     decisionWindow,
     dailyTradeLimit,
-    marketRegime
+    marketRegime,
+    noTradeIntelligence
   };
 }
 
