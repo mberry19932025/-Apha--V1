@@ -212,6 +212,127 @@ function mergeLatestApiQuotes(currentMarket, apiCandlesBySymbol) {
   });
 }
 
+function getTradeHourLabel(dateString) {
+  const date = new Date(dateString || Date.now());
+  if (Number.isNaN(date.getTime())) {
+    return "unknown";
+  }
+  return `${String(date.getHours()).padStart(2, "0")}:00`;
+}
+
+function buildWindowMemory(trades = []) {
+  const today = new Date().toISOString().slice(0, 10);
+  const closed = (trades || []).filter(
+    (trade) => String(trade.createdAt || "").slice(0, 10) === today && Number(trade.realizedPnl || 0) !== 0
+  );
+  const windows = Object.values(
+    closed.reduce((map, trade) => {
+      const hour = getTradeHourLabel(trade.createdAt);
+      map[hour] ||= { hour, trades: 0, pnl: 0, wins: 0, losses: 0 };
+      map[hour].trades += 1;
+      map[hour].pnl += Number(trade.realizedPnl || 0);
+      if (Number(trade.realizedPnl || 0) > 0) map[hour].wins += 1;
+      if (Number(trade.realizedPnl || 0) < 0) map[hour].losses += 1;
+      return map;
+    }, {})
+  ).map((window) => ({
+    ...window,
+    averagePnl: window.trades ? window.pnl / window.trades : 0,
+    winRate: window.trades ? (window.wins / window.trades) * 100 : 0
+  }));
+  const bestWindow = [...windows]
+    .filter((window) => window.trades >= 2 && window.pnl > 0)
+    .sort((a, b) => b.pnl - a.pnl || b.winRate - a.winRate)[0] || null;
+  return {
+    closedTrades: closed,
+    windows,
+    bestWindow,
+    currentHour: getTradeHourLabel(new Date().toISOString()),
+    hasEnoughEvidence: closed.length >= 4 && Boolean(bestWindow)
+  };
+}
+
+function buildAutoModeDecision({
+  automationMode,
+  beginnerSafeMode,
+  portfolio,
+  portfolioState,
+  scanner,
+  hasEnoughRealEtfData,
+  decisionWindowMinutes,
+  maxTradesPerDay
+}) {
+  const windowMemory = buildWindowMemory(portfolioState?.trades || []);
+
+  if (automationMode !== "auto") {
+    return {
+      requested: automationMode,
+      mode: automationMode,
+      active: false,
+      windowMemory,
+      reason: "Manual automation mode selected."
+    };
+  }
+
+  const coreResults = recoveryWatchlist
+    .map((symbol) => scanner?.results?.find((result) => result.symbol === symbol))
+    .filter(Boolean);
+  const averageScore = coreResults.length
+    ? coreResults.reduce((sum, result) => sum + Number(result.score || 0), 0) / coreResults.length
+    : 0;
+  const buyCount = coreResults.filter((result) => result.action === "buy").length;
+  const sellCount = coreResults.filter((result) => result.action === "sell").length;
+  const strongestScore = coreResults.length ? Math.max(...coreResults.map((result) => Number(result.score || 0))) : 0;
+  const todayClosed = windowMemory.closedTrades;
+  const wins = todayClosed.filter((trade) => Number(trade.realizedPnl || 0) > 0);
+  const losses = todayClosed.filter((trade) => Number(trade.realizedPnl || 0) < 0);
+  const realizedPnl = todayClosed.reduce((sum, trade) => sum + Number(trade.realizedPnl || 0), 0);
+  const lastClosed = [...todayClosed].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+  const lastWinAgeMinutes = wins.length
+    ? (Date.now() - new Date([...wins].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0].createdAt).getTime()) / 60000
+    : Infinity;
+  const windowOk = !windowMemory.hasEnoughEvidence || windowMemory.bestWindow?.hour === windowMemory.currentHour;
+  const blockers = [
+    !hasEnoughRealEtfData && "real API/CSV data not ready",
+    beginnerSafeMode && portfolio.totalReturn <= 0 && "safe mode keeps red/flat account moderate",
+    Number(portfolio.totalReturn || 0) < 10 && "session profit below $10",
+    todayClosed.length < 2 && "needs at least 2 closed trades today",
+    wins.length < 2 && "needs 2 winning closed trades today",
+    losses.length > wins.length && "losses outnumber wins",
+    lastClosed && Number(lastClosed.realizedPnl || 0) < 0 && "last closed trade was a loss",
+    realizedPnl <= 0 && "realized P/L is not positive",
+    averageScore < 72 && "core ETF average score below 72",
+    strongestScore < 78 && "strongest ETF score below 78",
+    buyCount < 2 && "fewer than 2 core ETFs are bullish",
+    sellCount >= 2 && "too many core ETFs are sell signals",
+    decisionWindowMinutes < 5 && "entry window is too fast",
+    maxTradesPerDay > 3 && "daily entry limit is too high",
+    lastWinAgeMinutes > 45 && "bullish boost window expired after 45 minutes",
+    !windowOk && `current hour is not proven best window (${windowMemory.bestWindow?.hour})`
+  ].filter(Boolean);
+
+  return {
+    requested: "auto",
+    mode: blockers.length ? "moderate" : "bullish",
+    active: true,
+    windowMemory,
+    stats: {
+      averageScore: Number(averageScore.toFixed(1)),
+      buyCount,
+      sellCount,
+      strongestScore,
+      realizedPnl,
+      wins: wins.length,
+      losses: losses.length,
+      lastWinAgeMinutes: Number.isFinite(lastWinAgeMinutes) ? Number(lastWinAgeMinutes.toFixed(1)) : null
+    },
+    reason: blockers.length
+      ? `Auto mode using Moderate: ${blockers.join("; ")}.`
+      : "Auto mode temporarily promoted to Bullish for up to 45 minutes because trades, market quality, and timing are aligned.",
+    blockers
+  };
+}
+
 function loadLearningJournal() {
   try {
     const stored = localStorage.getItem(learningJournalKey);
@@ -305,7 +426,7 @@ function App() {
   const [emergencyStopActive, setEmergencyStopActive] = useState(() =>
     loadStoredBoolean(emergencyStopKey, false)
   );
-  const [automationMode, setAutomationMode] = useState("moderate");
+  const [automationMode, setAutomationMode] = useState("auto");
   const [dayTradeEnabled, setDayTradeEnabled] = useState(true);
   const [optionsEnabled, setOptionsEnabled] = useState(false);
   const [beginnerSafeMode, setBeginnerSafeMode] = useState(true);
@@ -466,8 +587,31 @@ function App() {
   const missingRequiredEtfs = requiredEtfDataStatus
     .filter((item) => !item.ready)
     .map((item) => item.symbol);
+  const autoModeDecision = useMemo(
+    () =>
+      buildAutoModeDecision({
+        automationMode,
+        beginnerSafeMode,
+        portfolio,
+        portfolioState,
+        scanner,
+        hasEnoughRealEtfData,
+        decisionWindowMinutes,
+        maxTradesPerDay
+      }),
+    [
+      automationMode,
+      beginnerSafeMode,
+      portfolio,
+      portfolioState,
+      scanner,
+      hasEnoughRealEtfData,
+      decisionWindowMinutes,
+      maxTradesPerDay
+    ]
+  );
   const effectiveAutomationMode =
-    beginnerSafeMode && portfolio.totalReturn <= 0 ? "moderate" : automationMode;
+    beginnerSafeMode && portfolio.totalReturn <= 0 ? "moderate" : autoModeDecision.mode;
   const beginnerOptionsBlocked = beginnerSafeMode && portfolio.totalReturn <= 0;
   const effectiveOptionsEnabled = optionsEnabled && !beginnerOptionsBlocked;
   const effectiveFuturesExtendedHours = allowFuturesExtendedHours && !beginnerSafeMode;
@@ -818,7 +962,7 @@ function App() {
   function applyRecoveryPreset() {
     setAutomationEnabled(false);
     setBeginnerSafeMode(true);
-    setAutomationMode("moderate");
+    setAutomationMode("auto");
     setOptionsEnabled(false);
     setAllowFuturesExtendedHours(false);
     setDecisionWindowMinutes(5);
@@ -829,7 +973,7 @@ function App() {
       action: "recovery-preset",
       symbol: "-",
       quantity: 0,
-      reason: "Applied recovery preset: SPY, DIA, IWM, QQQ; Moderate; Safe Mode; no options; no extended-hours futures; 5-minute windows; max 3 entries."
+      reason: "Applied recovery preset: SPY, DIA, IWM, QQQ; Auto Disciplined; Safe Mode; no options; no extended-hours futures; 5-minute windows; max 3 entries."
     });
     setMessage("Recovery preset applied. Automation is stopped; run one cycle only after the account stabilizes.");
   }
@@ -1582,6 +1726,7 @@ function App() {
                 value={automationMode}
                 onChange={(event) => setAutomationMode(event.target.value)}
               >
+                <option value="auto">Auto Disciplined</option>
                 <option value="moderate">Moderate</option>
                 <option value="bullish">Bullish</option>
               </select>
@@ -1689,6 +1834,21 @@ function App() {
             {automationPlan.symbol ? `${automationPlan.symbol} x ${automationPlan.quantity}` : ""} ·{" "}
             {automationPlan.reason} · effective mode <strong>{effectiveAutomationMode}</strong>
           </p>
+          {autoModeDecision.active && (
+            <p className={`signal-note ${autoModeDecision.mode === "bullish" ? "gain" : ""}`}>
+              Auto governor: <strong>{autoModeDecision.mode.toUpperCase()}</strong> · {autoModeDecision.reason}
+              <br />
+              Best practice window:{" "}
+              <strong>
+                {autoModeDecision.windowMemory.bestWindow
+                  ? `${autoModeDecision.windowMemory.bestWindow.hour} · ${formatMoney(
+                      autoModeDecision.windowMemory.bestWindow.pnl
+                    )} P/L · ${formatPercent(autoModeDecision.windowMemory.bestWindow.winRate)} win rate`
+                  : "collecting today’s closed-trade evidence"}
+              </strong>
+              . Current hour: <strong>{autoModeDecision.windowMemory.currentHour}</strong>.
+            </p>
+          )}
           <p className="signal-note">
             Market regime: <strong>{automationPlan.marketRegime?.regime || "checking"}</strong> ·{" "}
             {automationPlan.marketRegime?.reason || "Waiting for ETF scanner."} Strongest ETF:{" "}
