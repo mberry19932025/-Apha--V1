@@ -1698,6 +1698,14 @@ function App() {
                 : "n/a"}
             </strong>
           </p>
+          <p
+            className={`signal-note ${
+              automationPlan.marketQuality?.verdict === "no-trade" ? "loss" : "gain"
+            }`}
+          >
+            Market quality: <strong>{automationPlan.marketQuality?.score ?? 0}/100</strong> ·{" "}
+            {automationPlan.marketQuality?.reason || "Waiting for core ETF scanner data."}
+          </p>
           {automationPlan.noTradeIntelligence?.bullishDiscipline?.active && (
             <p
               className={`signal-note ${
@@ -1778,6 +1786,13 @@ function App() {
             <br />
             Secure target: once session profit reaches{" "}
             <strong>{formatMoney(automationPlan.profitLock?.realisticProfitTarget || 100)}</strong>, automation secures the day and stops.
+            Profit floor:{" "}
+            <strong>
+              {automationPlan.profitLock?.profitFloor
+                ? formatMoney(automationPlan.profitLock.profitFloor)
+                : "$0.00"}
+            </strong>{" "}
+            protected after $25/$50/$75 session peaks.
             Daily kill switch: down{" "}
             <strong>{formatMoney(automationPlan.profitLock?.hardLossDollars || 75)}</strong> or 2.5%, close risk and stop.
             Substantial option winners can keep one runner only; no new trades are allowed while runner mode is active.

@@ -918,6 +918,61 @@ function evaluateBullishDiscipline({
   };
 }
 
+function evaluateMarketQuality(scannerResults = [], marketRegime = {}) {
+  const coreSymbols = ["SPY", "QQQ", "DIA", "IWM"];
+  const coreResults = coreSymbols
+    .map((symbol) => scannerResults.find((result) => result.symbol === symbol))
+    .filter(Boolean);
+
+  if (!coreResults.length) {
+    return {
+      score: 0,
+      verdict: "no-trade",
+      reason: "No core ETF scanner data is available.",
+      details: {}
+    };
+  }
+
+  const averageScore = coreResults.reduce((sum, result) => sum + Number(result.score || 0), 0) / coreResults.length;
+  const buyCount = coreResults.filter((result) => result.action === "buy").length;
+  const sellCount = coreResults.filter((result) => result.action === "sell").length;
+  const deepLiquidityCount = coreResults.filter((result) => result.intelligence?.liquidityGrade === "deep").length;
+  const normalVolCount = coreResults.filter((result) =>
+    ["quiet", "normal"].includes(result.intelligence?.volatilityRegime)
+  ).length;
+  const riskFlagCount = coreResults.reduce(
+    (sum, result) => sum + Number(result.intelligence?.riskFlags?.length || 0),
+    0
+  );
+
+  const trendScore = marketRegime?.regime === "trend-up" ? 26 : marketRegime?.regime === "neutral" ? 18 : 8;
+  const scoreStrength = Math.min(24, Math.max(0, (averageScore - 45) * 0.8));
+  const breadthScore = Math.min(20, buyCount * 7 - sellCount * 5 + 8);
+  const liquidityScore = Math.min(15, deepLiquidityCount * 4);
+  const volatilityScore = Math.min(15, normalVolCount * 4 - riskFlagCount * 3);
+  const score = round(Math.max(0, Math.min(100, trendScore + scoreStrength + breadthScore + liquidityScore + volatilityScore)));
+  const verdict = score >= 78 ? "tradeable" : score >= 70 ? "selective" : "no-trade";
+
+  return {
+    score,
+    verdict,
+    reason:
+      verdict === "no-trade"
+        ? `No Trade Day: market quality is ${score}/100. Breadth, trend, volume, or volatility are not clean enough.`
+        : verdict === "selective"
+          ? `Selective market: quality is ${score}/100. Only the strongest liquid ETF may trade.`
+          : `Tradeable market: quality is ${score}/100 with acceptable ETF trend, breadth, liquidity, and volatility.`,
+    details: {
+      averageScore: round(averageScore, 1),
+      buyCount,
+      sellCount,
+      deepLiquidityCount,
+      normalVolCount,
+      riskFlagCount
+    }
+  };
+}
+
 export function evaluateFuturesPolicy({
   portfolio = {},
   automationLog = [],
@@ -1105,7 +1160,6 @@ export function evaluateAutomationPlan({
   if (bullishDiscipline.active && !bullishDiscipline.passed) {
     noTradeIntelligence.blockedReasons.push(bullishDiscipline.label);
   }
-  noTradeIntelligence.canOpenNewEntry = noTradeIntelligence.blockedReasons.length === 0;
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
   const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 80 : 76;
@@ -1119,8 +1173,28 @@ export function evaluateAutomationPlan({
   const hardDailyLossStop = currentProfit <= -hardLossDollars || dailyLossPercent >= 2.5;
   const realisticProfitTarget = Math.min(100, Math.max(35, startingCash * 0.04));
   const secureDayProfit = sessionProfit >= realisticProfitTarget;
+  const profitFloor =
+    sessionProfit >= 75
+      ? 55
+      : sessionProfit >= 50
+        ? 30
+        : sessionProfit >= 25
+          ? 10
+          : 0;
+  const floorGivebackStop = profitFloor > 0 && currentProfit < profitFloor;
   const gaveBackTooMuch = sessionProfit >= 15 && givebackDollars >= Math.max(8, sessionProfit * 0.3);
   const greenToRed = sessionProfit >= 10 && currentProfit <= 0;
+  const profitLockStatus = {
+    hardDailyLossStop,
+    secureDayProfit,
+    realisticProfitTarget: round(realisticProfitTarget),
+    profitFloor: round(profitFloor),
+    floorGivebackStop,
+    hardLossDollars: round(hardLossDollars),
+    sessionProfit: round(sessionProfit),
+    currentProfit: round(currentProfit),
+    givebackDollars: round(givebackDollars)
+  };
   const openStockRisk = (portfolio?.positions || []).sort(
     (a, b) => Math.abs(Number(b.marketValue || 0)) - Math.abs(Number(a.marketValue || 0))
   )[0];
@@ -1138,6 +1212,11 @@ export function evaluateAutomationPlan({
   const bestCategory = categoryRanks[0] || null;
   const managedSymbols = bestCategory?.symbols?.length ? bestCategory.symbols : watchlist.length ? watchlist : symbols;
   const allowedSymbols = new Set(managedSymbols);
+  const marketQuality = evaluateMarketQuality(scanner?.results || [], marketRegime);
+  if (marketQuality.verdict === "no-trade") {
+    noTradeIntelligence.blockedReasons.push(marketQuality.reason);
+  }
+  noTradeIntelligence.canOpenNewEntry = noTradeIntelligence.blockedReasons.length === 0;
   const candidates = (scanner?.results || [])
     .filter((result) => allowedSymbols.has(result.symbol))
     .map((result) => {
@@ -1214,11 +1293,13 @@ export function evaluateAutomationPlan({
       futuresPolicy,
       adaptiveRisk,
       marketClock,
-      learningMemory
+      learningMemory,
+      marketQuality,
+      profitLock: profitLockStatus
     };
   }
 
-  if ((hardDailyLossStop || secureDayProfit || gaveBackTooMuch || greenToRed) && largestRisk) {
+  if ((hardDailyLossStop || secureDayProfit || floorGivebackStop || gaveBackTooMuch || greenToRed) && largestRisk) {
     if (largestRisk.assetType === "future") {
       return {
         action: largestRisk.quantity > 0 ? "sell-future" : "buy-future",
@@ -1228,6 +1309,8 @@ export function evaluateAutomationPlan({
           ? `Daily kill switch: account is down ${round(Math.abs(currentProfit))} (${round(dailyLossPercent, 2)}%). Closing futures risk and stopping new trades.`
           : secureDayProfit
             ? `Profit secure: session profit reached ${round(sessionProfit)}. Closing futures risk and stopping new trades.`
+            : floorGivebackStop
+              ? `Profit floor: account was up ${round(sessionProfit)} and fell below the protected ${round(profitFloor)} floor. Closing futures risk.`
             : greenToRed
               ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing futures risk.`
               : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing futures risk.`,
@@ -1241,6 +1324,8 @@ export function evaluateAutomationPlan({
           hardDailyLossStop,
           secureDayProfit,
           realisticProfitTarget: round(realisticProfitTarget),
+          profitFloor: round(profitFloor),
+          floorGivebackStop,
           hardLossDollars: round(hardLossDollars),
           sessionProfit: round(sessionProfit),
           currentProfit: round(currentProfit),
@@ -1253,7 +1338,7 @@ export function evaluateAutomationPlan({
       const substantialOptionWin =
         Number(largestRisk.unrealizedPnl || 0) >= 150 ||
         Number(largestRisk.unrealizedPnlPercent || 0) >= 100;
-      if (secureDayProfit && substantialOptionWin && largestRisk.quantity === 1 && !hardDailyLossStop && !gaveBackTooMuch && !greenToRed) {
+      if (secureDayProfit && substantialOptionWin && largestRisk.quantity === 1 && !hardDailyLossStop && !floorGivebackStop && !gaveBackTooMuch && !greenToRed) {
         return {
           action: "hold",
           reason: `Profit secure: session profit reached ${round(sessionProfit)}. Keeping one substantial winning option as a defined runner; no new trades today unless it gives back profit.`,
@@ -1269,6 +1354,8 @@ export function evaluateAutomationPlan({
             substantialOptionWin,
             runnerLeft: true,
             realisticProfitTarget: round(realisticProfitTarget),
+            profitFloor: round(profitFloor),
+            floorGivebackStop,
             hardLossDollars: round(hardLossDollars),
             sessionProfit: round(sessionProfit),
             currentProfit: round(currentProfit),
@@ -1291,6 +1378,8 @@ export function evaluateAutomationPlan({
             ? substantialOptionWin && largestRisk.quantity > 1
               ? `Profit secure: session profit reached ${round(sessionProfit)}. Selling ${runnerQuantity} option contract(s) to secure profit and leaving one defined runner. No new trades today.`
               : `Profit secure: session profit reached ${round(sessionProfit)}. Closing option risk and stopping new trades.`
+            : floorGivebackStop
+              ? `Profit floor: account was up ${round(sessionProfit)} and fell below the protected ${round(profitFloor)} floor. Closing option risk.`
             : greenToRed
               ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing option risk.`
               : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing option risk.`,
@@ -1306,6 +1395,8 @@ export function evaluateAutomationPlan({
           substantialOptionWin,
           runnerLeft: secureDayProfit && substantialOptionWin && largestRisk.quantity > runnerQuantity,
           realisticProfitTarget: round(realisticProfitTarget),
+          profitFloor: round(profitFloor),
+          floorGivebackStop,
           hardLossDollars: round(hardLossDollars),
           sessionProfit: round(sessionProfit),
           currentProfit: round(currentProfit),
@@ -1322,6 +1413,8 @@ export function evaluateAutomationPlan({
         ? `Daily kill switch: account is down ${round(Math.abs(currentProfit))} (${round(dailyLossPercent, 2)}%). Closing stock/ETF risk and stopping new trades.`
         : secureDayProfit
           ? `Profit secure: session profit reached ${round(sessionProfit)}. Closing stock/ETF risk and stopping new trades.`
+          : floorGivebackStop
+            ? `Profit floor: account was up ${round(sessionProfit)} and fell below the protected ${round(profitFloor)} floor. Closing stock/ETF risk.`
           : greenToRed
             ? `Profit lock: account went from green to flat/red after being up ${round(sessionProfit)}. Closing stock/ETF risk.`
             : `Profit lock: gave back ${round(givebackDollars)} of ${round(sessionProfit)} peak session profit. Closing stock/ETF risk.`,
@@ -1335,6 +1428,8 @@ export function evaluateAutomationPlan({
         hardDailyLossStop,
         secureDayProfit,
         realisticProfitTarget: round(realisticProfitTarget),
+        profitFloor: round(profitFloor),
+        floorGivebackStop,
         hardLossDollars: round(hardLossDollars),
         sessionProfit: round(sessionProfit),
         currentProfit: round(currentProfit),
@@ -1343,13 +1438,15 @@ export function evaluateAutomationPlan({
     };
   }
 
-  if (hardDailyLossStop || secureDayProfit || greenToRed) {
+  if (hardDailyLossStop || secureDayProfit || floorGivebackStop || greenToRed) {
     return {
       action: "hold",
       reason: hardDailyLossStop
         ? `Daily kill switch: account is down ${round(Math.abs(currentProfit))} (${round(dailyLossPercent, 2)}%). No more new trades today.`
         : secureDayProfit
           ? `Profit secure: session profit reached ${round(sessionProfit)}. No more new trades today.`
+          : floorGivebackStop
+            ? `Profit floor: account was up ${round(sessionProfit)} and fell below the protected ${round(profitFloor)} floor. No more new trades today.`
           : `Profit lock: account was up ${round(sessionProfit)} and is no longer green. Stop new trades for the day.`,
       profile,
       bestCategory,
@@ -1361,6 +1458,8 @@ export function evaluateAutomationPlan({
         hardDailyLossStop,
         secureDayProfit,
         realisticProfitTarget: round(realisticProfitTarget),
+        profitFloor: round(profitFloor),
+        floorGivebackStop,
         hardLossDollars: round(hardLossDollars),
         sessionProfit: round(sessionProfit),
         currentProfit: round(currentProfit),
@@ -1423,6 +1522,8 @@ export function evaluateAutomationPlan({
       decisionWindow,
       dailyTradeLimit,
       marketRegime,
+      marketQuality,
+      profitLock: profitLockStatus,
       noTradeIntelligence
     };
   }
@@ -1443,6 +1544,8 @@ export function evaluateAutomationPlan({
       decisionWindow,
       dailyTradeLimit,
       marketRegime,
+      marketQuality,
+      profitLock: profitLockStatus,
       noTradeIntelligence
     };
   }
@@ -1460,6 +1563,8 @@ export function evaluateAutomationPlan({
       decisionWindow,
       dailyTradeLimit,
       marketRegime,
+      marketQuality,
+      profitLock: profitLockStatus,
       noTradeIntelligence
     };
   }
@@ -1477,6 +1582,8 @@ export function evaluateAutomationPlan({
       decisionWindow,
       dailyTradeLimit,
       marketRegime,
+      marketQuality,
+      profitLock: profitLockStatus,
       noTradeIntelligence
     };
   }
@@ -1494,6 +1601,27 @@ export function evaluateAutomationPlan({
       decisionWindow,
       dailyTradeLimit,
       marketRegime,
+      marketQuality,
+      profitLock: profitLockStatus,
+      noTradeIntelligence
+    };
+  }
+
+  if (marketQuality.verdict === "no-trade") {
+    return {
+      action: "hold",
+      reason: marketQuality.reason,
+      profile,
+      bestCategory,
+      categoryRanks,
+      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
+      futuresPolicy,
+      adaptiveRisk,
+      decisionWindow,
+      dailyTradeLimit,
+      marketRegime,
+      marketQuality,
+      profitLock: profitLockStatus,
       noTradeIntelligence
     };
   }
@@ -1511,6 +1639,8 @@ export function evaluateAutomationPlan({
       decisionWindow,
       dailyTradeLimit,
       marketRegime,
+      marketQuality,
+      profitLock: profitLockStatus,
       noTradeIntelligence
     };
   }
