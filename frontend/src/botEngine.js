@@ -798,8 +798,8 @@ export function evaluateMarketRegime(scannerResults = []) {
     reason = "Broad ETF trend is positive across multiple indexes.";
   } else if (bearishEtfs.length >= 2 || averageScore < 58) {
     regime = "risk-off";
-    tradePermission = "blocked";
-    reason = "ETF trend is weak or bearish. Avoid new entries.";
+    tradePermission = "selective";
+    reason = "ETF trend is weak or bearish. Avoid weak long entries; only strict downside paper futures/puts or exceptional reversal setups qualify.";
   } else if (highVolatilityCount >= 2) {
     regime = "choppy";
     tradePermission = "selective";
@@ -912,7 +912,7 @@ function evaluateBullishDiscipline({
       strongestEtfScore: 78,
       bullishEtfCount: 2,
       maxExposurePercentBeforeEntry: 20,
-      minimumDecisionWindowMinutes: 5,
+      minimumDecisionWindowMinutes: 2,
       maxEntriesPerDay: 3
     }
   };
@@ -1217,8 +1217,8 @@ export function evaluateAutomationPlan({
   if (marketRegime.tradePermission === "blocked") {
     noTradeIntelligence.blockedReasons.push(marketRegime.reason);
   }
-  if (adaptiveRisk.returnPercent < 0) {
-    noTradeIntelligence.blockedReasons.push("Account is red; capital recovery mode blocks new entries.");
+  if (adaptiveRisk.returnPercent <= -2.5) {
+    noTradeIntelligence.blockedReasons.push("Daily loss limit area reached; capital protection blocks new entries.");
   }
   if (bullishDiscipline.active && !bullishDiscipline.passed) {
     noTradeIntelligence.blockedReasons.push(bullishDiscipline.label);
@@ -1279,7 +1279,7 @@ export function evaluateAutomationPlan({
   const marketQuality = evaluateMarketQuality(scanner?.results || [], marketRegime);
   const selectiveOpportunityMode = marketQuality.score >= 60 && marketQuality.score < 70;
   const minBuyScore = adaptiveRisk.returnPercent < 0
-    ? 82
+    ? 88
     : selectiveOpportunityMode
       ? 84
       : mode === "bullish"
@@ -1672,10 +1672,10 @@ export function evaluateAutomationPlan({
     };
   }
 
-  if (adaptiveRisk.returnPercent < 0) {
+  if (adaptiveRisk.returnPercent <= -2.5) {
     return {
       action: "hold",
-      reason: `Capital recovery hold: account is red (${round(adaptiveRisk.returnPercent, 2)}%). No new entries until paper equity is back above starting cash.`,
+      reason: `Capital protection hold: account is down ${round(Math.abs(adaptiveRisk.returnPercent), 2)}%. No new entries near the daily loss limit.`,
       profile,
       bestCategory,
       categoryRanks,
@@ -1801,7 +1801,7 @@ export function evaluateAutomationPlan({
       result.score >= minBuyScore &&
       strategyScore >= (
         adaptiveRisk.returnPercent < 0
-          ? 72
+          ? 82
           : selectiveOpportunityMode
             ? 76
             : mode === "bullish"
@@ -1819,7 +1819,7 @@ export function evaluateAutomationPlan({
     const futuresCandidate = futuresEnabled &&
       futuresAllowedByClock &&
       futuresPolicy.canTradeFutures &&
-      adaptiveRisk.returnPercent >= 0 &&
+      adaptiveRisk.returnPercent > -1.5 &&
       marketQuality.score >= 60 &&
       Number(portfolio?.futuresExposurePercent || 0) <= 20 &&
       (!bullishDiscipline.active || bullishDiscipline.passed)
@@ -1830,11 +1830,30 @@ export function evaluateAutomationPlan({
             Math.min(100, Number(selectedStrategy?.score || 0) + Number(result.learningAdjustment || 0) * 0.5)
           );
           const flags = result.intelligence?.riskFlags || [];
+          const futuresScoreThreshold = adaptiveRisk.returnPercent < 0
+            ? 88
+            : selectiveOpportunityMode
+              ? 86
+              : mode === "bullish"
+                ? 82
+                : 76;
+          const futuresStrategyThreshold = adaptiveRisk.returnPercent < 0
+            ? 82
+            : selectiveOpportunityMode
+              ? 78
+              : mode === "bullish"
+                ? 74
+                : 68;
+          const downsideFuturesAllowed =
+            marketRegime.regime === "risk-off" &&
+            adaptiveRisk.returnPercent >= 0 &&
+            result.action === "sell";
+          const upsideFuturesAllowed = result.action === "buy";
           return (
             assetCatalog.futures.includes(result.symbol) &&
-            result.action === "buy" &&
-            result.score >= (selectiveOpportunityMode ? 86 : mode === "bullish" ? 82 : 76) &&
-            strategyScore >= (selectiveOpportunityMode ? 78 : mode === "bullish" ? 74 : 68) &&
+            (upsideFuturesAllowed || downsideFuturesAllowed) &&
+            result.score >= futuresScoreThreshold &&
+            strategyScore >= futuresStrategyThreshold &&
             result.intelligence?.liquidityGrade !== "avoid" &&
             !["high", "extreme"].includes(result.intelligence?.volatilityRegime) &&
             flags.length === 0
@@ -1844,10 +1863,10 @@ export function evaluateAutomationPlan({
 
     if (futuresCandidate) {
       return {
-        action: "buy-future",
+        action: futuresCandidate.action === "sell" ? "sell-future" : "buy-future",
         symbol: futuresCandidate.symbol,
         quantity: 1,
-        reason: `Smart futures entry: ${futuresCandidate.symbol} passed market quality ${marketQuality.score}/100, ${selectiveOpportunityMode ? "selective opportunity" : "standard"} threshold, 4h cycle, 8h max-hold, scanner, strategy, liquidity, volatility, and 8% hard-loss gates. Re-evaluate in ${futuresPolicy.cycleHours} hours.`,
+        reason: `Smart futures ${futuresCandidate.action === "sell" ? "short" : "long"} entry: ${futuresCandidate.symbol} passed market quality ${marketQuality.score}/100, ${selectiveOpportunityMode ? "selective opportunity" : "standard"} threshold, 4h cycle, 8h max-hold, scanner, strategy, liquidity, volatility, and 8% hard-loss gates. Re-evaluate in ${futuresPolicy.cycleHours} hours.`,
         profile,
         bestCategory,
         categoryRanks,

@@ -2078,7 +2078,7 @@ function App() {
           </p>
           {automationPlan.adaptiveRisk?.returnPercent < 0 && (
             <p className="signal-note loss">
-              Loss mode active: no new entries while account is red. Use Recovery Preset to focus on liquid ETFs only.
+              Recovery mode active: shallow red accounts require exceptional setups and reduced sizing; near the daily loss limit, new entries stop.
             </p>
           )}
           <p className="signal-note">
