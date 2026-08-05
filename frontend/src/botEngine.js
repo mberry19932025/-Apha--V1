@@ -931,10 +931,27 @@ function evaluateBullishDiscipline({
   };
 }
 
-function evaluateMarketQuality(scannerResults = [], marketRegime = {}) {
+function evaluateMarketQuality(scannerResults = [], marketRegime = {}, market = []) {
   const coreSymbols = ["SPY", "QQQ", "DIA", "IWM"];
+  const quoteFallbackResults = coreSymbols.map((symbol) => {
+    const quote = (market || []).find((item) => item.symbol === symbol);
+    if (!quote) return null;
+    const changePercent = Number(quote.changePercent || 0);
+    const absChange = Math.abs(changePercent);
+    return {
+      symbol,
+      action: changePercent > 0.15 ? "buy" : changePercent < -0.15 ? "sell" : "hold",
+      score: round(Math.max(35, Math.min(82, 55 + changePercent * 8))),
+      intelligence: {
+        liquidityGrade: "deep",
+        volatilityRegime: absChange >= 2.5 ? "high" : absChange <= 1 ? "quiet" : "normal",
+        riskFlags: absChange >= 3.5 ? ["large intraday index move"] : []
+      },
+      quoteFallback: true
+    };
+  });
   const coreResults = coreSymbols
-    .map((symbol) => scannerResults.find((result) => result.symbol === symbol))
+    .map((symbol, index) => scannerResults.find((result) => result.symbol === symbol) || quoteFallbackResults[index])
     .filter(Boolean);
 
   if (!coreResults.length) {
@@ -946,6 +963,7 @@ function evaluateMarketQuality(scannerResults = [], marketRegime = {}) {
     };
   }
 
+  const fallbackCount = coreResults.filter((result) => result.quoteFallback).length;
   const averageScore = coreResults.reduce((sum, result) => sum + Number(result.score || 0), 0) / coreResults.length;
   const buyCount = coreResults.filter((result) => result.action === "buy").length;
   const sellCount = coreResults.filter((result) => result.action === "sell").length;
@@ -973,15 +991,16 @@ function evaluateMarketQuality(scannerResults = [], marketRegime = {}) {
       verdict === "no-trade"
         ? `No Trade Day: market quality is ${score}/100. Breadth, trend, volume, or volatility are not clean enough.`
         : verdict === "selective"
-          ? `Selective opportunity market: quality is ${score}/100. Only unusually strong, liquid, risk-capped setups may trade.`
-          : `Tradeable market: quality is ${score}/100 with acceptable ETF trend, breadth, liquidity, and volatility.`,
+          ? `Selective opportunity market: quality is ${score}/100. Only unusually strong, liquid, risk-capped setups may trade.${fallbackCount ? " Some core ETF scanner data used live-quote fallback." : ""}`
+          : `Tradeable market: quality is ${score}/100 with acceptable ETF trend, breadth, liquidity, and volatility.${fallbackCount ? " Some core ETF scanner data used live-quote fallback." : ""}`,
     details: {
       averageScore: round(averageScore, 1),
       buyCount,
       sellCount,
       deepLiquidityCount,
       normalVolCount,
-      riskFlagCount
+      riskFlagCount,
+      fallbackCount
     }
   };
 }
@@ -1178,6 +1197,7 @@ export function evaluateAutomationPlan({
   automationLog = [],
   learningMemory = buildPaperLearningMemory(portfolio?.trades || []),
   futuresEnabled = true,
+  market = getMarketSnapshot(),
   marketClock = getMarketClock(),
   allowFuturesExtendedHours = false,
   decisionWindowMinutes = 5,
@@ -1289,7 +1309,7 @@ export function evaluateAutomationPlan({
   const bestCategory = categoryRanks[0] || null;
   const managedSymbols = bestCategory?.symbols?.length ? bestCategory.symbols : watchlist.length ? watchlist : symbols;
   const allowedSymbols = new Set(managedSymbols);
-  const marketQuality = evaluateMarketQuality(scanner?.results || [], marketRegime);
+  const marketQuality = evaluateMarketQuality(scanner?.results || [], marketRegime, market);
   const selectiveOpportunityMode = marketQuality.score >= 60 && marketQuality.score < 70;
   const minBuyScore = adaptiveRisk.returnPercent < 0
     ? 88

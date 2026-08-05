@@ -421,7 +421,7 @@ function buildBotQualityAudit({
     {
       id: "current-plan",
       label: "Current automation plan is explainable",
-      passed: Boolean(automationPlan?.reason) && Boolean(automationPlan?.marketQuality),
+      passed: Boolean(automationPlan?.reason) && Number(automationPlan?.marketQuality?.score || 0) > 0,
       detail: `${automationPlan?.action || "hold"} · market ${automationPlan?.marketQuality?.score ?? 0}/100`
     }
   ];
@@ -745,6 +745,7 @@ function App() {
         automationLog,
         learningMemory: paperLearningMemory,
         futuresEnabled: true,
+        market,
         marketClock,
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
         decisionWindowMinutes,
@@ -763,6 +764,7 @@ function App() {
       strategyMap,
       automationLog,
       paperLearningMemory,
+      market,
       marketClock,
       effectiveFuturesExtendedHours,
       decisionWindowMinutes,
@@ -1409,6 +1411,7 @@ function App() {
         automationLog,
         learningMemory: paperLearningMemory,
         futuresEnabled: true,
+        market,
         marketClock,
         allowFuturesExtendedHours: effectiveFuturesExtendedHours,
         decisionWindowMinutes,
