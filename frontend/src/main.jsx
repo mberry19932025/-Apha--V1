@@ -48,7 +48,7 @@ const recoveryWatchlist = ["SPY", "DIA", "IWM", "QQQ"];
 const apiUpdateWatchlist = ["SPY", "QQQ", "DIA", "IWM"];
 const realDataSources = ["csv", "api-1min", "api-daily"];
 const autoRefreshIntervalMs = 5 * 60 * 1000;
-const autoStartMarketQualityThreshold = 70;
+const autoStartMarketQualityThreshold = 60;
 const opportunityWatchlist = [
   {
     symbol: "GLD",
@@ -309,7 +309,7 @@ function buildAutoModeDecision({
     strongestScore < 78 && "strongest ETF score below 78",
     buyCount < 2 && "fewer than 2 core ETFs are bullish",
     sellCount >= 2 && "too many core ETFs are sell signals",
-    decisionWindowMinutes < 5 && "entry window is too fast",
+    decisionWindowMinutes < 2 && "entry window is too fast",
     maxTradesPerDay > 3 && "daily entry limit is too high",
     lastWinAgeMinutes > 45 && "bullish boost window expired after 45 minutes",
     !windowOk && `current hour is not proven best window (${windowMemory.bestWindow?.hour})`
@@ -439,7 +439,7 @@ function App() {
   const [optionsEnabled, setOptionsEnabled] = useState(false);
   const [beginnerSafeMode, setBeginnerSafeMode] = useState(true);
   const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(true);
-  const [decisionWindowMinutes, setDecisionWindowMinutes] = useState(5);
+  const [decisionWindowMinutes, setDecisionWindowMinutes] = useState(2);
   const [maxTradesPerDay, setMaxTradesPerDay] = useState(3);
   const [realDataRequired, setRealDataRequired] = useState(true);
   const [marketClock, setMarketClock] = useState(() => getMarketClock());
@@ -735,7 +735,7 @@ function App() {
       "Bullish mode is selected but bullish discipline has not passed.",
     effectiveOptionsEnabled && "Options are still enabled.",
     maxTradesPerDay > 3 && "Max entries is above beginner limit.",
-    decisionWindowMinutes < 5 && "Entry window is faster than 5 minutes.",
+    decisionWindowMinutes < 2 && "Entry window is faster than 2 minutes.",
     automationPlan.noTradeIntelligence?.blockedReasons?.length &&
       automationPlan.noTradeIntelligence.blockedReasons.join(" "),
     automationPlan.profitLock?.hardDailyLossStop && "Daily kill switch is active.",
@@ -934,7 +934,7 @@ function App() {
 
     const marketQualityReady = Number(automationPlan.marketQuality?.score || 0) >= autoStartMarketQualityThreshold;
     const marketOk = marketClock.isRegularSession || effectiveFuturesExtendedHours;
-    const cooldownOk = Date.now() - lastAutoStartAt.current >= 60000;
+    const cooldownOk = Date.now() - lastAutoStartAt.current >= 2 * 60 * 1000;
 
     if (!startGateReady || !marketQualityReady || !marketOk || !cooldownOk) {
       return;
@@ -1070,7 +1070,7 @@ function App() {
     setAutomationMode("auto");
     setOptionsEnabled(false);
     setAllowFuturesExtendedHours(true);
-    setDecisionWindowMinutes(5);
+    setDecisionWindowMinutes(2);
     setMaxTradesPerDay(3);
     setRealDataRequired(true);
     setWatchlist(recoveryWatchlist);
@@ -1868,8 +1868,8 @@ function App() {
                 value={decisionWindowMinutes}
                 onChange={(event) => setDecisionWindowMinutes(Number(event.target.value))}
               >
-                <option value={1}>1 minute test</option>
-                <option value={5}>5 minutes disciplined</option>
+                <option value={2}>2 minutes disciplined</option>
+                <option value={5}>5 minutes selective</option>
                 <option value={15}>15 minutes selective</option>
               </select>
             </label>

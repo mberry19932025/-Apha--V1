@@ -898,7 +898,7 @@ function evaluateBullishDiscipline({
   if (strongestScore < 78) failedRules.push("strongest ETF score must be 78+");
   if (bullishBreadth < 2) failedRules.push("at least two core ETFs must be bullish");
   if (exposure > 20) failedRules.push("current exposure must be 20% or lower before adding risk");
-  if (Number(decisionWindow?.windowMinutes || 0) < 5) failedRules.push("entry window must be at least 5 minutes");
+  if (Number(decisionWindow?.windowMinutes || 0) < 2) failedRules.push("entry window must be at least 2 minutes");
   if (Number(dailyTradeLimit?.maxTradesPerDay || 0) > 3) failedRules.push("max entries must stay at 3 or lower");
 
   return {
@@ -951,7 +951,7 @@ function evaluateMarketQuality(scannerResults = [], marketRegime = {}) {
   const liquidityScore = Math.min(15, deepLiquidityCount * 4);
   const volatilityScore = Math.min(15, normalVolCount * 4 - riskFlagCount * 3);
   const score = round(Math.max(0, Math.min(100, trendScore + scoreStrength + breadthScore + liquidityScore + volatilityScore)));
-  const verdict = score >= 78 ? "tradeable" : score >= 70 ? "selective" : "no-trade";
+  const verdict = score >= 78 ? "tradeable" : score >= 60 ? "selective" : "no-trade";
 
   return {
     score,
@@ -960,7 +960,7 @@ function evaluateMarketQuality(scannerResults = [], marketRegime = {}) {
       verdict === "no-trade"
         ? `No Trade Day: market quality is ${score}/100. Breadth, trend, volume, or volatility are not clean enough.`
         : verdict === "selective"
-          ? `Selective market: quality is ${score}/100. Only the strongest liquid ETF may trade.`
+          ? `Selective opportunity market: quality is ${score}/100. Only unusually strong, liquid, risk-capped setups may trade.`
           : `Tradeable market: quality is ${score}/100 with acceptable ETF trend, breadth, liquidity, and volatility.`,
     details: {
       averageScore: round(averageScore, 1),
@@ -1225,7 +1225,6 @@ export function evaluateAutomationPlan({
   }
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
-  const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 80 : 76;
   const availableCash = Math.max(0, Number(portfolio?.cash || 0));
   const maxTradeCash = Math.max(0, availableCash * maxSingleTradeCashPercent);
   const positions = new Map((portfolio?.positions || []).map((position) => [position.symbol, position]));
@@ -1278,6 +1277,14 @@ export function evaluateAutomationPlan({
   const managedSymbols = bestCategory?.symbols?.length ? bestCategory.symbols : watchlist.length ? watchlist : symbols;
   const allowedSymbols = new Set(managedSymbols);
   const marketQuality = evaluateMarketQuality(scanner?.results || [], marketRegime);
+  const selectiveOpportunityMode = marketQuality.score >= 60 && marketQuality.score < 70;
+  const minBuyScore = adaptiveRisk.returnPercent < 0
+    ? 82
+    : selectiveOpportunityMode
+      ? 84
+      : mode === "bullish"
+        ? 80
+        : 76;
   if (marketQuality.verdict === "no-trade") {
     noTradeIntelligence.blockedReasons.push(marketQuality.reason);
   }
@@ -1792,7 +1799,15 @@ export function evaluateAutomationPlan({
       assetCatalog.etfs.includes(result.symbol) &&
       (!strongestTradableEtfSymbol || result.symbol === strongestTradableEtfSymbol) &&
       result.score >= minBuyScore &&
-      strategyScore >= (adaptiveRisk.returnPercent < 0 ? 72 : mode === "bullish" ? 74 : 68) &&
+      strategyScore >= (
+        adaptiveRisk.returnPercent < 0
+          ? 72
+          : selectiveOpportunityMode
+            ? 76
+            : mode === "bullish"
+              ? 74
+              : 68
+      ) &&
       !positions.has(result.symbol) &&
       result.intelligence?.liquidityGrade !== "avoid" &&
       result.intelligence?.volatilityRegime !== "extreme" &&
@@ -1805,7 +1820,7 @@ export function evaluateAutomationPlan({
       futuresAllowedByClock &&
       futuresPolicy.canTradeFutures &&
       adaptiveRisk.returnPercent >= 0 &&
-      marketQuality.score >= 70 &&
+      marketQuality.score >= 60 &&
       Number(portfolio?.futuresExposurePercent || 0) <= 20 &&
       (!bullishDiscipline.active || bullishDiscipline.passed)
       ? futuresCandidates.find((result) => {
@@ -1818,8 +1833,8 @@ export function evaluateAutomationPlan({
           return (
             assetCatalog.futures.includes(result.symbol) &&
             result.action === "buy" &&
-            result.score >= (mode === "bullish" ? 82 : 76) &&
-            strategyScore >= (mode === "bullish" ? 74 : 68) &&
+            result.score >= (selectiveOpportunityMode ? 86 : mode === "bullish" ? 82 : 76) &&
+            strategyScore >= (selectiveOpportunityMode ? 78 : mode === "bullish" ? 74 : 68) &&
             result.intelligence?.liquidityGrade !== "avoid" &&
             !["high", "extreme"].includes(result.intelligence?.volatilityRegime) &&
             flags.length === 0
@@ -1832,7 +1847,7 @@ export function evaluateAutomationPlan({
         action: "buy-future",
         symbol: futuresCandidate.symbol,
         quantity: 1,
-        reason: `Smart futures entry: ${futuresCandidate.symbol} passed market quality ${marketQuality.score}/100, 4h cycle, 8h max-hold, scanner, strategy, liquidity, volatility, and 8% hard-loss gates. Re-evaluate in ${futuresPolicy.cycleHours} hours.`,
+        reason: `Smart futures entry: ${futuresCandidate.symbol} passed market quality ${marketQuality.score}/100, ${selectiveOpportunityMode ? "selective opportunity" : "standard"} threshold, 4h cycle, 8h max-hold, scanner, strategy, liquidity, volatility, and 8% hard-loss gates. Re-evaluate in ${futuresPolicy.cycleHours} hours.`,
         profile,
         bestCategory,
         categoryRanks,
