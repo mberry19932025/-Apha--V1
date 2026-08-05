@@ -973,11 +973,62 @@ function evaluateMarketQuality(scannerResults = [], marketRegime = {}) {
   };
 }
 
+function evaluateOptionPermission({
+  idea,
+  underlyingSetup,
+  strategyScore,
+  marketQuality,
+  hasRequiredRealData,
+  portfolio,
+  maxTradeCash
+} = {}) {
+  const reasons = [];
+  const score = Number(idea?.score || 0);
+  const setupScore = Number(underlyingSetup?.score || 0);
+  const premiumCost = Number(idea?.notionalCost || Infinity);
+  const marketQualityScore = Number(marketQuality?.score || 0);
+  const accountReturn = Number(portfolio?.totalReturn || 0);
+  const liquidityGrade = underlyingSetup?.intelligence?.liquidityGrade || "unknown";
+  const volatilityRegime = underlyingSetup?.intelligence?.volatilityRegime || "unknown";
+  const action = underlyingSetup?.action || "hold";
+  const expectedContract = action === "sell" ? "put" : action === "buy" ? "call" : null;
+  const directionMatches = expectedContract && idea?.contractType === expectedContract;
+
+  if (!idea) reasons.push("no option idea available");
+  if (!hasRequiredRealData) reasons.push("real ETF API/CSV data required");
+  if (marketQualityScore < 75) reasons.push("market quality must be 75+ for options");
+  if (!directionMatches) reasons.push("call/put direction is not confirmed by underlying signal");
+  if (action === "hold") reasons.push("underlying action is hold");
+  if (score < 72) reasons.push("option idea score must be 72+");
+  if (setupScore < 78) reasons.push("underlying scanner score must be 78+");
+  if (Number(strategyScore || 0) < 72) reasons.push("underlying strategy score must be 72+");
+  if (liquidityGrade !== "deep") reasons.push("underlying liquidity must be deep");
+  if (!["normal", "quiet"].includes(volatilityRegime)) reasons.push("volatility must be normal or quiet");
+  if (accountReturn < 10) reasons.push("paper session profit must be at least $10");
+  if (premiumCost > Math.max(35, Number(maxTradeCash || 0))) reasons.push("premium cost exceeds allowed paper risk");
+
+  return {
+    allowed: reasons.length === 0,
+    reasons,
+    label: reasons.length
+      ? `Options blocked: ${reasons.join("; ")}.`
+      : `${String(idea?.contractType || "option").toUpperCase()} permission passed: direction, data, liquidity, volatility, and risk are aligned.`,
+    required: {
+      marketQuality: 75,
+      optionScore: 72,
+      underlyingScore: 78,
+      strategyScore: 72,
+      maxPremiumCost: round(Math.max(35, Number(maxTradeCash || 0)))
+    }
+  };
+}
+
 export function evaluateFuturesPolicy({
   portfolio = {},
   automationLog = [],
   now = new Date(),
   cycleHours = 4,
+  maxHoldHours = 8,
   maxDailyLossPercent = 8,
   profitProtectPercent = 2
 } = {}) {
@@ -999,20 +1050,32 @@ export function evaluateFuturesPolicy({
   const hardStop = totalReturnPercent <= -maxDailyLossPercent;
   const protectProfit = totalReturnPercent >= profitProtectPercent && futuresPnlPercent < -0.35;
   const reduceRisk = totalReturnPercent <= -4;
+  const oldestOpenHours = (portfolio.futuresPositions || []).reduce((oldest, position) => {
+    const openedAt = position.openedAt ? new Date(position.openedAt).getTime() : 0;
+    if (!openedAt) {
+      return oldest;
+    }
+    const ageHours = (now.getTime() - openedAt) / (60 * 60 * 1000);
+    return Math.max(oldest, ageHours);
+  }, 0);
+  const maxHoldReached = oldestOpenHours >= maxHoldHours;
 
   return {
     cycleHours,
+    maxHoldHours,
     maxDailyLossPercent,
     profitProtectPercent,
     totalReturnPercent: round(totalReturnPercent, 2),
     futuresPnl: round(futuresPnl),
     futuresPnlPercent: round(futuresPnlPercent, 2),
     hoursSinceLastCycle: Number.isFinite(hoursSinceLastCycle) ? round(hoursSinceLastCycle, 2) : null,
+    oldestOpenHours: round(oldestOpenHours, 2),
     cycleDue,
+    maxHoldReached,
     hardStop,
     protectProfit,
     reduceRisk,
-    canTradeFutures: cycleDue && !hardStop && !protectProfit
+    canTradeFutures: cycleDue && !hardStop && !protectProfit && !maxHoldReached
   };
 }
 
@@ -1163,6 +1226,8 @@ export function evaluateAutomationPlan({
   const maxExposurePercent = adaptiveRisk.maxExposurePercent;
   const maxSingleTradeCashPercent = adaptiveRisk.maxSingleTradeCashPercent;
   const minBuyScore = adaptiveRisk.returnPercent < 0 ? 82 : mode === "bullish" ? 80 : 76;
+  const availableCash = Math.max(0, Number(portfolio?.cash || 0));
+  const maxTradeCash = Math.max(0, availableCash * maxSingleTradeCashPercent);
   const positions = new Map((portfolio?.positions || []).map((position) => [position.symbol, position]));
   const sessionProfit = Number(sessionPeakEquity || portfolio?.equity || 0) - Number(portfolio?.startingCash || 0);
   const currentProfit = Number(portfolio?.equity || 0) - Number(portfolio?.startingCash || 0);
@@ -1238,6 +1303,22 @@ export function evaluateAutomationPlan({
         learningAdjustment
       };
     });
+  const futuresCandidates = (scanner?.results || [])
+    .filter((result) => assetCatalog.futures.includes(result.symbol))
+    .map((result) => {
+      const selectedStrategy = strategyMap[result.symbol];
+      const learningAdjustment = getLearningAdjustment(learningMemory, {
+        symbol: result.symbol,
+        strategy: selectedStrategy?.strategy?.name || "n/a",
+        assetType: "future"
+      });
+      return {
+        ...result,
+        rawScore: result.score,
+        score: round(Math.max(0, Math.min(100, Number(result.score || 0) + learningAdjustment))),
+        learningAdjustment
+      };
+    });
   const strongestTradableEtfSymbol = marketRegime.strongestEtf?.symbol || null;
   const optionsIdeas = buildOptionsIdeas(scanner?.results || []);
   const bestOptionIdea = optionsIdeas
@@ -1253,7 +1334,19 @@ export function evaluateAutomationPlan({
         ...idea,
         rawScore: idea.score,
         score: round(Math.max(0, Math.min(100, Number(idea.score || 0) + learningAdjustment))),
-        learningAdjustment
+        learningAdjustment,
+        permission: evaluateOptionPermission({
+          idea: {
+            ...idea,
+            score: round(Math.max(0, Math.min(100, Number(idea.score || 0) + learningAdjustment)))
+          },
+          underlyingSetup: scanner?.results?.find((result) => result.symbol === idea.underlying),
+          strategyScore: selectedStrategy?.score || 0,
+          marketQuality,
+          hasRequiredRealData,
+          portfolio,
+          maxTradeCash
+        })
       };
     })
     .sort((a, b) => b.score - a.score)[0] || null;
@@ -1278,6 +1371,7 @@ export function evaluateAutomationPlan({
     (position) =>
       futuresPolicy.hardStop ||
       futuresPolicy.protectProfit ||
+      futuresPolicy.maxHoldReached ||
       Number(position.unrealizedPnlPercent || 0) >= 1.25 ||
       Number(position.unrealizedPnlPercent || 0) <= -1.2
   );
@@ -1477,6 +1571,8 @@ export function evaluateAutomationPlan({
         ? `Futures hard stop: daily loss reached ${round(Math.abs(futuresPolicy.totalReturnPercent), 2)}%, max ${futuresPolicy.maxDailyLossPercent}%.`
         : futuresPolicy.protectProfit
           ? "Futures profit protection: account is green but futures position is giving back gains."
+          : futuresPolicy.maxHoldReached
+            ? `Futures 8h guard: max hold time reached. Close and wait for the next 4h evaluation cycle.`
           : futuresExit.unrealizedPnlPercent >= 0
             ? `Futures 4h guard: secure ${round(futuresExit.unrealizedPnlPercent, 2)}% open gain.`
             : `Futures 4h guard: cut ${round(futuresExit.unrealizedPnlPercent, 2)}% open loss.`,
@@ -1705,19 +1801,28 @@ export function evaluateAutomationPlan({
   });
 
   if (!buyCandidate) {
-    const futuresCandidate = futuresEnabled && futuresAllowedByClock && futuresPolicy.canTradeFutures && adaptiveRisk.returnPercent >= 0 && (!bullishDiscipline.active || bullishDiscipline.passed)
-      ? candidates.find((result) => {
+    const futuresCandidate = futuresEnabled &&
+      futuresAllowedByClock &&
+      futuresPolicy.canTradeFutures &&
+      adaptiveRisk.returnPercent >= 0 &&
+      marketQuality.score >= 70 &&
+      Number(portfolio?.futuresExposurePercent || 0) <= 20 &&
+      (!bullishDiscipline.active || bullishDiscipline.passed)
+      ? futuresCandidates.find((result) => {
           const selectedStrategy = strategyMap[result.symbol];
           const strategyScore = Math.max(
             0,
             Math.min(100, Number(selectedStrategy?.score || 0) + Number(result.learningAdjustment || 0) * 0.5)
           );
+          const flags = result.intelligence?.riskFlags || [];
           return (
             assetCatalog.futures.includes(result.symbol) &&
             result.action === "buy" &&
-            result.score >= (mode === "bullish" ? 78 : 72) &&
-            strategyScore >= (mode === "bullish" ? 72 : 64) &&
-            result.intelligence?.volatilityRegime !== "extreme"
+            result.score >= (mode === "bullish" ? 82 : 76) &&
+            strategyScore >= (mode === "bullish" ? 74 : 68) &&
+            result.intelligence?.liquidityGrade !== "avoid" &&
+            !["high", "extreme"].includes(result.intelligence?.volatilityRegime) &&
+            flags.length === 0
           );
         })
       : null;
@@ -1727,7 +1832,7 @@ export function evaluateAutomationPlan({
         action: "buy-future",
         symbol: futuresCandidate.symbol,
         quantity: 1,
-        reason: `Futures 4h cycle entry: ${futuresCandidate.symbol} passed scanner, strategy, and volatility gates. Re-evaluate in ${futuresPolicy.cycleHours} hours.`,
+        reason: `Smart futures entry: ${futuresCandidate.symbol} passed market quality ${marketQuality.score}/100, 4h cycle, 8h max-hold, scanner, strategy, liquidity, volatility, and 8% hard-loss gates. Re-evaluate in ${futuresPolicy.cycleHours} hours.`,
         profile,
         bestCategory,
         categoryRanks,
@@ -1736,7 +1841,10 @@ export function evaluateAutomationPlan({
         adaptiveRisk,
         decisionWindow,
         dailyTradeLimit,
-        marketRegime
+        marketRegime,
+        marketQuality,
+        profitLock: profitLockStatus,
+        noTradeIntelligence
       };
     }
 
@@ -1783,8 +1891,6 @@ export function evaluateAutomationPlan({
     };
   }
 
-  const availableCash = Math.max(0, Number(portfolio?.cash || 0));
-  const maxTradeCash = Math.max(0, availableCash * maxSingleTradeCashPercent);
   const quantity = Math.floor(maxTradeCash / Number(buyCandidate.price || 1));
 
   if (quantity < 1) {
@@ -1794,6 +1900,7 @@ export function evaluateAutomationPlan({
       adaptiveRisk.returnPercent >= 0 &&
       bestOptionIdea &&
       bestOptionIdea.stance !== "hold" &&
+      bestOptionIdea.permission?.allowed &&
       bestOptionIdea.notionalCost <= Math.max(50, maxTradeCash);
 
     if (optionFallback) {
@@ -1802,7 +1909,7 @@ export function evaluateAutomationPlan({
         symbol: bestOptionIdea.underlying,
         quantity: 1,
         optionIdea: bestOptionIdea,
-        reason: `Cash-aware sizing selected defined-risk option idea because one share of ${buyCandidate.symbol} exceeds per-trade cash limit.`,
+        reason: `Cash-aware sizing selected defined-risk option idea because one share of ${buyCandidate.symbol} exceeds per-trade cash limit. ${bestOptionIdea.permission.label}`,
         profile,
         bestCategory,
         categoryRanks,

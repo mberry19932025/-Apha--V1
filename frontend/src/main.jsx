@@ -60,7 +60,7 @@ const opportunityWatchlist = [
     symbol: "MGC",
     category: "Gold futures",
     stance: "paper-only",
-    rule: "Micro gold futures stay blocked by Beginner Safe Mode unless extended-hours futures are intentionally enabled."
+    rule: "Micro gold futures remain paper-only and require smart futures after-hours gates."
   },
   {
     symbol: "MBT",
@@ -438,7 +438,7 @@ function App() {
   const [dayTradeEnabled, setDayTradeEnabled] = useState(true);
   const [optionsEnabled, setOptionsEnabled] = useState(false);
   const [beginnerSafeMode, setBeginnerSafeMode] = useState(true);
-  const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(false);
+  const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(true);
   const [decisionWindowMinutes, setDecisionWindowMinutes] = useState(5);
   const [maxTradesPerDay, setMaxTradesPerDay] = useState(3);
   const [realDataRequired, setRealDataRequired] = useState(true);
@@ -464,7 +464,6 @@ function App() {
   );
   const bestSetup = scanner?.results?.[0];
   const marketIntelligence = scanner?.results || [];
-  const optionsIdeas = useMemo(() => buildOptionsIdeas(scanner?.results || [], market), [scanner, market]);
   const categoryRanks = useMemo(
     () => rankAutomationCategories(scanner?.results || [], watchlist),
     [scanner, watchlist]
@@ -624,7 +623,7 @@ function App() {
     beginnerSafeMode && portfolio.totalReturn <= 0 ? "moderate" : autoModeDecision.mode;
   const beginnerOptionsBlocked = beginnerSafeMode && portfolio.totalReturn <= 0;
   const effectiveOptionsEnabled = optionsEnabled && !beginnerOptionsBlocked;
-  const effectiveFuturesExtendedHours = allowFuturesExtendedHours && !beginnerSafeMode;
+  const effectiveFuturesExtendedHours = allowFuturesExtendedHours;
   const automationPlan = useMemo(
     () =>
       evaluateAutomationPlan({
@@ -665,6 +664,42 @@ function App() {
       sessionPeakEquity
     ]
   );
+  const optionsIdeas = useMemo(() => {
+    const planBest = automationPlan?.bestOptionIdea;
+    return buildOptionsIdeas(scanner?.results || [], market).map((idea) => {
+      if (planBest?.underlying === idea.underlying && planBest?.contractType === idea.contractType) {
+        return { ...idea, permission: planBest.permission };
+      }
+
+      const setup = scanner?.results?.find((result) => result.symbol === idea.underlying);
+      const strategyScore = strategyMap[idea.underlying]?.score || 0;
+      const marketQualityScore = Number(automationPlan?.marketQuality?.score || 0);
+      const reasons = [];
+      const expectedContract = setup?.action === "sell" ? "put" : setup?.action === "buy" ? "call" : null;
+
+      if (!hasEnoughRealEtfData) reasons.push("real ETF API/CSV data required");
+      if (marketQualityScore < 75) reasons.push("market quality must be 75+ for options");
+      if (!expectedContract || idea.contractType !== expectedContract) reasons.push("call/put direction not confirmed");
+      if ((setup?.score || 0) < 78) reasons.push("underlying scanner score must be 78+");
+      if (strategyScore < 72) reasons.push("underlying strategy score must be 72+");
+      if (setup?.intelligence?.liquidityGrade !== "deep") reasons.push("underlying liquidity must be deep");
+      if (!["normal", "quiet"].includes(setup?.intelligence?.volatilityRegime)) {
+        reasons.push("volatility must be normal or quiet");
+      }
+      if (portfolio.totalReturn < 10) reasons.push("paper session profit must be at least $10");
+
+      return {
+        ...idea,
+        permission: {
+          allowed: reasons.length === 0,
+          reasons,
+          label: reasons.length
+            ? `Options blocked: ${reasons.join("; ")}.`
+            : `${idea.contractType.toUpperCase()} permission passed.`
+        }
+      };
+    });
+  }, [scanner, market, automationPlan, strategyMap, hasEnoughRealEtfData, portfolio.totalReturn]);
   const opportunitySignals = useMemo(
     () =>
       opportunityWatchlist.map((opportunity) => {
@@ -699,7 +734,6 @@ function App() {
       !automationPlan.noTradeIntelligence?.bullishDiscipline?.passed &&
       "Bullish mode is selected but bullish discipline has not passed.",
     effectiveOptionsEnabled && "Options are still enabled.",
-    effectiveFuturesExtendedHours && "Futures extended-hours is enabled.",
     maxTradesPerDay > 3 && "Max entries is above beginner limit.",
     decisionWindowMinutes < 5 && "Entry window is faster than 5 minutes.",
     automationPlan.noTradeIntelligence?.blockedReasons?.length &&
@@ -1035,7 +1069,7 @@ function App() {
     setBeginnerSafeMode(true);
     setAutomationMode("auto");
     setOptionsEnabled(false);
-    setAllowFuturesExtendedHours(false);
+    setAllowFuturesExtendedHours(true);
     setDecisionWindowMinutes(5);
     setMaxTradesPerDay(3);
     setRealDataRequired(true);
@@ -1044,7 +1078,7 @@ function App() {
       action: "recovery-preset",
       symbol: "-",
       quantity: 0,
-      reason: "Applied recovery preset: SPY, DIA, IWM, QQQ; Auto Disciplined; Safe Mode; no options; no extended-hours futures; 5-minute windows; max 3 entries."
+      reason: "Applied recovery preset: SPY, DIA, IWM, QQQ; Auto Disciplined; Safe Mode; no options; smart futures after-hours allowed with 4h/8h gates; 5-minute windows; max 3 entries."
     });
     setMessage("Recovery preset applied. Automation is stopped; run one cycle only after the account stabilizes.");
   }
@@ -1154,7 +1188,7 @@ function App() {
     }
 
     if (!marketClock.isRegularSession && !effectiveFuturesExtendedHours) {
-      const reason = `Automation not started: regular market is closed (${marketClock.label}). Enable futures extended-hours paper cycles if you intentionally want futures-only testing.`;
+      const reason = `Automation not started: regular market is closed (${marketClock.label}). Enable smart futures after-hours paper cycles if you intentionally want futures-only testing.`;
       recordAutomation({
         action: "start-blocked",
         symbol: "-",
@@ -1882,7 +1916,7 @@ function App() {
                 checked={allowFuturesExtendedHours}
                 onChange={(event) => setAllowFuturesExtendedHours(event.target.checked)}
               />
-              Allow futures extended-hours paper cycles
+              Allow smart futures after-hours paper cycles
             </label>
             <label className="inline-toggle">
               <input
@@ -1912,7 +1946,7 @@ function App() {
           <p className="signal-note">
             Beginner Safe Mode: <strong>{beginnerSafeMode ? "on" : "off"}</strong> ·{" "}
             {beginnerSafeMode
-              ? "keeps the bot disciplined for a realistic small account: uses moderate evaluation while red, blocks extended-hours futures, and blocks option entries while the session is red."
+              ? "keeps the bot disciplined for a realistic small account: uses moderate evaluation while red, blocks option entries while the session is red, and keeps smart futures under 4h/8h gates."
               : "advanced risk gates are relaxed; use this only for paper testing."}
             {beginnerOptionsBlocked && " Options are blocked until the paper session is green."}
           </p>
@@ -1921,7 +1955,7 @@ function App() {
             <strong>{marketClock.isRegularSession ? "open" : "closed"}</strong>
             {marketClock.isRegularSession
               ? ` · ${marketClock.minutesUntilClose} minutes until close`
-              : " · automation stops unless futures extended-hours is enabled"}
+              : " · automation stops unless smart futures after-hours is enabled"}
           </p>
           <div className="brief-list blocker-list">
             <div className="brief-item">
@@ -2100,6 +2134,17 @@ function App() {
               </>
             )}
           </p>
+          {automationPlan.bestOptionIdea?.permission && (
+            <p
+              className={`signal-note ${
+                automationPlan.bestOptionIdea.permission.allowed ? "gain" : "loss"
+              }`}
+            >
+              Calls/Puts permission:{" "}
+              <strong>{automationPlan.bestOptionIdea.permission.allowed ? "allowed" : "blocked"}</strong>.{" "}
+              {automationPlan.bestOptionIdea.permission.label}
+            </p>
+          )}
           <div className="quick-actions">
             <button
               type="button"
@@ -2401,6 +2446,11 @@ function App() {
                     {idea.expiry} · est. premium {formatMoney(idea.premium)} · max loss{" "}
                     {formatMoney(idea.notionalCost)} · score {idea.score}/100 · {idea.note}
                   </small>
+                  {idea.permission && (
+                    <small className={idea.permission.allowed ? "gain" : "loss"}>
+                      Calls/Puts gate: {idea.permission.allowed ? "allowed" : "blocked"} · {idea.permission.label}
+                    </small>
+                  )}
                   <small>
                     Best underlying strategy:{" "}
                     <strong>
@@ -2414,10 +2464,20 @@ function App() {
                     </strong>
                   </small>
                   <span className="quick-actions inline-actions">
-                    <button type="button" className="secondary mini" onClick={() => tradeOptionIdea(idea, "buy")}>
+                    <button
+                      type="button"
+                      className="secondary mini"
+                      disabled={!idea.permission?.allowed}
+                      onClick={() => tradeOptionIdea(idea, "buy")}
+                    >
                       Paper Buy
                     </button>
-                    <button type="button" className="secondary mini" onClick={() => tradeOptionIdea(idea, "sell")}>
+                    <button
+                      type="button"
+                      className="secondary mini"
+                      disabled={!idea.permission?.allowed}
+                      onClick={() => tradeOptionIdea(idea, "sell")}
+                    >
                       Paper Sell
                     </button>
                   </span>
