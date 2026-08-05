@@ -337,6 +337,114 @@ function buildAutoModeDecision({
   };
 }
 
+function daysOld(dateString) {
+  if (!dateString) return Infinity;
+  const parsed = new Date(`${String(dateString).slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return Infinity;
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  return Math.max(0, Math.floor((today.getTime() - parsed.getTime()) / (24 * 60 * 60 * 1000)));
+}
+
+function buildBotQualityAudit({
+  readiness,
+  learningSummary,
+  dailyReport,
+  dataStatus,
+  strategyComparison,
+  portfolio,
+  automationPlan,
+  paperLearningMemory
+}) {
+  const realRows = (dataStatus || []).filter(
+    (item) => realDataSources.includes(item.source) && Number(item.rows || 0) >= 60
+  );
+  const newestDataDate = (dataStatus || [])
+    .map((item) => item.lastDate)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  const freshestAge = daysOld(newestDataDate);
+  const bestStrategyResult = [...(strategyComparison || [])].sort(
+    (a, b) => Number(b.result?.summary?.profitFactor || 0) - Number(a.result?.summary?.profitFactor || 0)
+  )[0];
+  const bestSummary = bestStrategyResult?.result?.summary || {};
+  const checks = [
+    {
+      id: "fresh-real-data",
+      label: "Fresh real candle data is loaded",
+      passed: realRows.length >= 8 && freshestAge <= 1,
+      detail: `${realRows.length}/${symbols.length} symbols real · ${Number.isFinite(freshestAge) ? `${freshestAge}d old` : "missing"}`
+    },
+    {
+      id: "readiness",
+      label: "Readiness gate is strong enough",
+      passed: Number(readiness?.score || 0) >= 75,
+      detail: `${readiness?.score || 0}/100 readiness`
+    },
+    {
+      id: "paper-sample",
+      label: "Enough collected paper evidence",
+      passed: Number(learningSummary?.totalRuns || 0) >= 20 && Number(learningSummary?.qualifiedRuns || 0) >= 8,
+      detail: `${learningSummary?.qualifiedRuns || 0}/${learningSummary?.totalRuns || 0} qualified saved runs`
+    },
+    {
+      id: "closed-trades",
+      label: "Enough closed paper trades today to judge behavior",
+      passed: Number(dailyReport?.closedTrades || 0) >= 5,
+      detail: `${dailyReport?.closedTrades || 0} closed today`
+    },
+    {
+      id: "profit-factor",
+      label: "Best tested strategy has positive payoff quality",
+      passed: Number(bestSummary.profitFactor || 0) >= 1.25 && Number(bestSummary.completedTrades || 0) >= 3,
+      detail: `${bestStrategyResult?.strategy?.name || "n/a"} PF ${Number(bestSummary.profitFactor || 0).toFixed(2)}`
+    },
+    {
+      id: "drawdown",
+      label: "Backtest drawdown remains controlled",
+      passed: Number(bestSummary.maxDrawdownPercent || 0) > 0 && Number(bestSummary.maxDrawdownPercent || 0) <= 5,
+      detail: `${Number(bestSummary.maxDrawdownPercent || 0).toFixed(2)}% max DD`
+    },
+    {
+      id: "daily-risk",
+      label: "Paper account is not near the daily loss stop",
+      passed: Number(portfolio?.totalReturnPercent || 0) > -2.5,
+      detail: `${Number(portfolio?.totalReturnPercent || 0).toFixed(2)}% session return`
+    },
+    {
+      id: "learning-memory",
+      label: "Learning memory has closed-trade feedback",
+      passed: Number(paperLearningMemory?.closedTrades || 0) >= 5,
+      detail: `${paperLearningMemory?.closedTrades || 0} closed trades in memory`
+    },
+    {
+      id: "current-plan",
+      label: "Current automation plan is explainable",
+      passed: Boolean(automationPlan?.reason) && Boolean(automationPlan?.marketQuality),
+      detail: `${automationPlan?.action || "hold"} · market ${automationPlan?.marketQuality?.score ?? 0}/100`
+    }
+  ];
+  const passed = checks.filter((check) => check.passed).length;
+  const score = Math.round((passed / checks.length) * 100);
+  const blockers = checks.filter((check) => !check.passed).map((check) => check.label);
+
+  return {
+    score,
+    verdict: score >= 80 ? "paper-ready" : score >= 60 ? "building" : "not proven",
+    passed,
+    total: checks.length,
+    checks,
+    blockers,
+    recommendation:
+      score >= 80
+        ? "Good enough for disciplined paper automation; keep collecting results before any real-money connection."
+        : score >= 60
+          ? "Promising, but keep it paper-only and fix the failed checks before increasing risk."
+          : "Not proven yet. Focus on fresh data, closed trades, and repeated qualified runs before trusting it."
+  };
+}
+
 function loadLearningJournal() {
   try {
     const stored = localStorage.getItem(learningJournalKey);
@@ -662,6 +770,29 @@ function App() {
       realDataRequired,
       hasEnoughRealEtfData,
       sessionPeakEquity
+    ]
+  );
+  const botQualityAudit = useMemo(
+    () =>
+      buildBotQualityAudit({
+        readiness,
+        learningSummary,
+        dailyReport,
+        dataStatus,
+        strategyComparison,
+        portfolio,
+        automationPlan,
+        paperLearningMemory
+      }),
+    [
+      readiness,
+      learningSummary,
+      dailyReport,
+      dataStatus,
+      strategyComparison,
+      portfolio,
+      automationPlan,
+      paperLearningMemory
     ]
   );
   const optionsIdeas = useMemo(() => {
@@ -2340,6 +2471,54 @@ function App() {
                 </div>
               ))}
             </div>
+          ) : null}
+        </article>
+
+        <article className="card">
+          <div className="card-header">
+            <h2>Bot Quality Audit</h2>
+            <span className={`pill ${botQualityAudit.score >= 80 ? "buy" : botQualityAudit.score >= 60 ? "hold" : "sell"}`}>
+              {botQualityAudit.verdict}
+            </span>
+          </div>
+          <div className="metrics four">
+            <div>
+              <small>Quality Score</small>
+              <strong>{botQualityAudit.score}/100</strong>
+            </div>
+            <div>
+              <small>Checks</small>
+              <strong>
+                {botQualityAudit.passed}/{botQualityAudit.total}
+              </strong>
+            </div>
+            <div>
+              <small>Saved Runs</small>
+              <strong>{learningSummary.totalRuns}</strong>
+            </div>
+            <div>
+              <small>Closed Today</small>
+              <strong>{dailyReport.closedTrades}</strong>
+            </div>
+          </div>
+          <p className="signal-note">{botQualityAudit.recommendation}</p>
+          <div className="brief-list">
+            {botQualityAudit.checks.map((check) => (
+              <div className="brief-item" key={check.id}>
+                <span className={check.passed ? "checkmark" : "xmark"}>
+                  {check.passed ? "✓" : "!"}
+                </span>
+                <span>
+                  <strong>{check.label}</strong>
+                  <small>{check.detail}</small>
+                </span>
+              </div>
+            ))}
+          </div>
+          {botQualityAudit.blockers.length ? (
+            <p className="signal-note loss">
+              Fix first: {botQualityAudit.blockers.slice(0, 3).join("; ")}.
+            </p>
           ) : null}
         </article>
       </section>
