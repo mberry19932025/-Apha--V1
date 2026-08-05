@@ -45,7 +45,7 @@ const automationSnapshotsKey = "apex-alpha-automation-snapshots";
 const sessionPeakEquityKey = "apex-alpha-session-peak-equity";
 const emergencyStopKey = "apex-alpha-emergency-stop";
 const recoveryWatchlist = ["SPY", "DIA", "IWM", "QQQ"];
-const apiUpdateWatchlist = ["SPY", "QQQ", "DIA", "IWM"];
+const apiUpdateWatchlist = ["SPY", "QQQ", "DIA", "IWM", "NVDA", "AMD", "SMH", "SOXX"];
 const realDataSources = ["csv", "api-1min", "api-daily"];
 const autoRefreshIntervalMs = 5 * 60 * 1000;
 const autoStartMarketQualityThreshold = 60;
@@ -2356,6 +2356,13 @@ function App() {
               <span>
                 <strong>Stocks</strong>
                 <small>{assetCatalog.stocks.join(", ")}</small>
+              </span>
+            </div>
+            <div className="brief-item">
+              <span className="checkmark">✓</span>
+              <span>
+                <strong>AI Chips</strong>
+                <small>{assetCatalog.aiChips.join(", ")} · stricter auto-entry gates than broad ETFs.</small>
               </span>
             </div>
             <div className="brief-item">

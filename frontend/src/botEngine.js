@@ -8,6 +8,9 @@ export const symbols = [
   "AAPL",
   "MSFT",
   "NVDA",
+  "AMD",
+  "SMH",
+  "SOXX",
   "TSLA",
   "SPY",
   "QQQ",
@@ -24,9 +27,10 @@ export const symbols = [
 ];
 
 export const assetCatalog = {
-  stocks: ["AAPL", "MSFT", "NVDA", "TSLA"],
-  etfs: ["SPY", "QQQ", "IWM", "DIA", "TLT", "GLD"],
-  optionsUnderlyings: ["SPY", "QQQ", "AAPL", "NVDA", "TSLA"],
+  stocks: ["AAPL", "MSFT", "NVDA", "AMD", "TSLA"],
+  etfs: ["SPY", "QQQ", "IWM", "DIA", "TLT", "GLD", "SMH", "SOXX"],
+  aiChips: ["NVDA", "AMD", "SMH", "SOXX"],
+  optionsUnderlyings: ["SPY", "QQQ", "AAPL", "NVDA", "AMD", "TSLA"],
   futures: ["MES", "MNQ", "M2K", "MYM", "MGC", "MBT"]
 };
 
@@ -58,6 +62,9 @@ const basePrices = {
   AAPL: 212.45,
   MSFT: 426.8,
   NVDA: 118.72,
+  AMD: 166.4,
+  SMH: 274.25,
+  SOXX: 516.2,
   TSLA: 231.6,
   SPY: 552.38,
   QQQ: 472.19,
@@ -77,6 +84,9 @@ const profiles = {
   AAPL: { start: 184, trend: 0.00058, cycle: 0.025, noise: 0.013 },
   MSFT: { start: 390, trend: 0.00042, cycle: 0.018, noise: 0.01 },
   NVDA: { start: 91, trend: 0.0012, cycle: 0.04, noise: 0.022 },
+  AMD: { start: 122, trend: 0.00105, cycle: 0.052, noise: 0.026 },
+  SMH: { start: 210, trend: 0.00078, cycle: 0.035, noise: 0.018 },
+  SOXX: { start: 430, trend: 0.00074, cycle: 0.038, noise: 0.019 },
   TSLA: { start: 210, trend: 0.00025, cycle: 0.055, noise: 0.028 },
   SPY: { start: 495, trend: 0.00034, cycle: 0.014, noise: 0.007 },
   QQQ: { start: 425, trend: 0.00048, cycle: 0.02, noise: 0.01 },
@@ -571,6 +581,9 @@ export function estimateOptionPremium({
 }
 
 export function getSymbolCategory(symbol) {
+  if (assetCatalog.aiChips.includes(symbol)) {
+    return "ai-chips";
+  }
   if (assetCatalog.futures.includes(symbol)) {
     return "futures";
   }
@@ -1794,23 +1807,41 @@ export function evaluateAutomationPlan({
       0,
       Math.min(100, Number(selectedStrategy?.score || 50) + Number(result.learningAdjustment || 0) * 0.5)
     );
+    const isAiChip = assetCatalog.aiChips.includes(result.symbol);
+    const isTradableEtf = assetCatalog.etfs.includes(result.symbol) && !isAiChip;
+    const scannerThreshold = isAiChip
+      ? adaptiveRisk.returnPercent < 0
+        ? 90
+        : selectiveOpportunityMode
+          ? 88
+          : mode === "bullish"
+            ? 84
+            : 80
+      : minBuyScore;
+    const strategyThreshold = isAiChip
+      ? adaptiveRisk.returnPercent < 0
+        ? 84
+        : selectiveOpportunityMode
+          ? 80
+          : mode === "bullish"
+            ? 76
+            : 72
+      : adaptiveRisk.returnPercent < 0
+        ? 82
+        : selectiveOpportunityMode
+          ? 76
+          : mode === "bullish"
+            ? 74
+            : 68;
     return (
       result.action === "buy" &&
-      assetCatalog.etfs.includes(result.symbol) &&
-      (!strongestTradableEtfSymbol || result.symbol === strongestTradableEtfSymbol) &&
-      result.score >= minBuyScore &&
-      strategyScore >= (
-        adaptiveRisk.returnPercent < 0
-          ? 82
-          : selectiveOpportunityMode
-            ? 76
-            : mode === "bullish"
-              ? 74
-              : 68
-      ) &&
+      (isTradableEtf || isAiChip) &&
+      (isAiChip || !strongestTradableEtfSymbol || result.symbol === strongestTradableEtfSymbol) &&
+      result.score >= scannerThreshold &&
+      strategyScore >= strategyThreshold &&
       !positions.has(result.symbol) &&
       result.intelligence?.liquidityGrade !== "avoid" &&
-      result.intelligence?.volatilityRegime !== "extreme" &&
+      !["high", "extreme"].includes(result.intelligence?.volatilityRegime) &&
       flags.length === 0
     );
   });
