@@ -940,8 +940,8 @@ function evaluateMarketQuality(scannerResults = [], marketRegime = {}, market = 
     const absChange = Math.abs(changePercent);
     return {
       symbol,
-      action: changePercent > 0.15 ? "buy" : changePercent < -0.15 ? "sell" : "hold",
-      score: round(Math.max(35, Math.min(82, 55 + changePercent * 8))),
+      action: changePercent > 0.1 ? "buy" : changePercent < -0.1 ? "sell" : "hold",
+      score: round(Math.max(40, Math.min(85, 58 + changePercent * 10))),
       intelligence: {
         liquidityGrade: "deep",
         volatilityRegime: absChange >= 2.5 ? "high" : absChange <= 1 ? "quiet" : "normal",
@@ -982,7 +982,7 @@ function evaluateMarketQuality(scannerResults = [], marketRegime = {}, market = 
   const liquidityScore = Math.min(15, deepLiquidityCount * 4);
   const volatilityScore = Math.min(15, normalVolCount * 4 - riskFlagCount * 3);
   const score = round(Math.max(0, Math.min(100, trendScore + scoreStrength + breadthScore + liquidityScore + volatilityScore)));
-  const verdict = score >= 78 ? "tradeable" : score >= 60 ? "selective" : "no-trade";
+  const verdict = score >= 75 ? "tradeable" : score >= 50 ? "selective" : "no-trade";
 
   return {
     score,
@@ -1160,7 +1160,7 @@ export function getDecisionWindowStatus({
   const safeWindowMinutes = Math.max(1, Math.min(15, Number(windowMinutes || 5)));
   const minute = Number(marketClock.minute || 0);
   const second = Number(marketClock.second || 0);
-  const isWindowOpen = minute % safeWindowMinutes === 0 && second < 45;
+  const isWindowOpen = minute % safeWindowMinutes === 0 && second < 60;
   const minutesUntilNextWindow = isWindowOpen ? 0 : safeWindowMinutes - (minute % safeWindowMinutes);
   const newEntryActions = ["buy", "buy-option", "buy-future"];
   const lastEntry = (automationLog || []).find((entry) => newEntryActions.includes(entry.action));
@@ -1170,7 +1170,7 @@ export function getDecisionWindowStatus({
   const lastClosedLoss = (portfolio?.trades || []).find((trade) => Number(trade.realizedPnl || 0) < 0);
   const lastLossTime = lastClosedLoss ? new Date(lastClosedLoss.createdAt).getTime() : 0;
   const minutesSinceLoss = lastLossTime ? (now.getTime() - lastLossTime) / (60 * 1000) : Infinity;
-  const lossCooldownMinutes = 10;
+  const lossCooldownMinutes = 4;
   const lossCooldownActive = Number.isFinite(minutesSinceLoss) && minutesSinceLoss < lossCooldownMinutes;
 
   return {
@@ -1310,14 +1310,14 @@ export function evaluateAutomationPlan({
   const managedSymbols = bestCategory?.symbols?.length ? bestCategory.symbols : watchlist.length ? watchlist : symbols;
   const allowedSymbols = new Set(managedSymbols);
   const marketQuality = evaluateMarketQuality(scanner?.results || [], marketRegime, market);
-  const selectiveOpportunityMode = marketQuality.score >= 60 && marketQuality.score < 70;
+  const selectiveOpportunityMode = marketQuality.score >= 50 && marketQuality.score < 70;
   const minBuyScore = adaptiveRisk.returnPercent < 0
-    ? 88
+    ? 86
     : selectiveOpportunityMode
-      ? 84
+      ? 78
       : mode === "bullish"
-        ? 80
-        : 76;
+        ? 78
+        : 72;
   if (marketQuality.verdict === "no-trade") {
     noTradeIntelligence.blockedReasons.push(marketQuality.reason);
   }
@@ -1831,32 +1831,32 @@ export function evaluateAutomationPlan({
     const isTradableEtf = assetCatalog.etfs.includes(result.symbol) && !isAiChip;
     const scannerThreshold = isAiChip
       ? adaptiveRisk.returnPercent < 0
-        ? 90
+        ? 88
         : selectiveOpportunityMode
-          ? 88
+          ? 82
           : mode === "bullish"
-            ? 84
-            : 80
+            ? 80
+            : 76
       : minBuyScore;
     const strategyThreshold = isAiChip
       ? adaptiveRisk.returnPercent < 0
-        ? 84
-        : selectiveOpportunityMode
-          ? 80
-          : mode === "bullish"
-            ? 76
-            : 72
-      : adaptiveRisk.returnPercent < 0
         ? 82
         : selectiveOpportunityMode
           ? 76
           : mode === "bullish"
             ? 74
-            : 68;
+            : 68
+      : adaptiveRisk.returnPercent < 0
+        ? 80
+        : selectiveOpportunityMode
+          ? 72
+          : mode === "bullish"
+            ? 72
+            : 64;
     return (
       result.action === "buy" &&
       (isTradableEtf || isAiChip) &&
-      (isAiChip || !strongestTradableEtfSymbol || result.symbol === strongestTradableEtfSymbol) &&
+      (isAiChip || !strongestTradableEtfSymbol || result.symbol === strongestTradableEtfSymbol || result.score >= scannerThreshold + 6) &&
       result.score >= scannerThreshold &&
       strategyScore >= strategyThreshold &&
       !positions.has(result.symbol) &&
@@ -1871,7 +1871,7 @@ export function evaluateAutomationPlan({
       futuresAllowedByClock &&
       futuresPolicy.canTradeFutures &&
       adaptiveRisk.returnPercent > -1.5 &&
-      marketQuality.score >= 60 &&
+      marketQuality.score >= 50 &&
       Number(portfolio?.futuresExposurePercent || 0) <= 20 &&
       (!bullishDiscipline.active || bullishDiscipline.passed)
       ? futuresCandidates.find((result) => {
@@ -1882,19 +1882,19 @@ export function evaluateAutomationPlan({
           );
           const flags = result.intelligence?.riskFlags || [];
           const futuresScoreThreshold = adaptiveRisk.returnPercent < 0
-            ? 88
+            ? 86
             : selectiveOpportunityMode
-              ? 86
+              ? 80
               : mode === "bullish"
-                ? 82
-                : 76;
+                ? 80
+                : 72;
           const futuresStrategyThreshold = adaptiveRisk.returnPercent < 0
-            ? 82
+            ? 80
             : selectiveOpportunityMode
-              ? 78
+              ? 74
               : mode === "bullish"
-                ? 74
-                : 68;
+                ? 72
+                : 64;
           const downsideFuturesAllowed =
             marketRegime.regime === "risk-off" &&
             adaptiveRisk.returnPercent >= 0 &&

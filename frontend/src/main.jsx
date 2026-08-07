@@ -48,7 +48,7 @@ const recoveryWatchlist = ["SPY", "DIA", "IWM", "QQQ"];
 const apiUpdateWatchlist = ["SPY", "QQQ", "DIA", "IWM", "NVDA", "AMD", "SMH", "SOXX"];
 const realDataSources = ["csv", "api-1min", "api-daily"];
 const autoRefreshIntervalMs = 5 * 60 * 1000;
-const autoStartMarketQualityThreshold = 60;
+const autoStartMarketQualityThreshold = 50;
 const opportunityWatchlist = [
   {
     symbol: "GLD",
