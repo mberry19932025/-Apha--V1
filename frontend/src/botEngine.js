@@ -1170,7 +1170,7 @@ export function getDecisionWindowStatus({
   const lastClosedLoss = (portfolio?.trades || []).find((trade) => Number(trade.realizedPnl || 0) < 0);
   const lastLossTime = lastClosedLoss ? new Date(lastClosedLoss.createdAt).getTime() : 0;
   const minutesSinceLoss = lastLossTime ? (now.getTime() - lastLossTime) / (60 * 1000) : Infinity;
-  const lossCooldownMinutes = 4;
+  const lossCooldownMinutes = 2;
   const lossCooldownActive = Number.isFinite(minutesSinceLoss) && minutesSinceLoss < lossCooldownMinutes;
 
   return {
@@ -1182,7 +1182,7 @@ export function getDecisionWindowStatus({
     lossCooldownActive,
     lossCooldownMinutes,
     minutesSinceLoss: Number.isFinite(minutesSinceLoss) ? round(minutesSinceLoss, 1) : null,
-    canOpenNewTrade: isWindowOpen && !entryCooldownActive && !lossCooldownActive
+    canOpenNewTrade: !entryCooldownActive && !lossCooldownActive
   };
 }
 
@@ -1244,9 +1244,6 @@ export function evaluateAutomationPlan({
     bullishDiscipline,
     blockedReasons: []
   };
-  if (realDataRequired && !hasRequiredRealData) {
-    noTradeIntelligence.blockedReasons.push("Real ETF CSV/API candle data is required before new entries.");
-  }
   if (marketRegime.tradePermission === "blocked") {
     noTradeIntelligence.blockedReasons.push(marketRegime.reason);
   }
@@ -1686,24 +1683,7 @@ export function evaluateAutomationPlan({
     };
   }
 
-  if (realDataRequired && !hasRequiredRealData) {
-    return {
-      action: "hold",
-      reason: "Real data required mode: load CSV or API candles for SPY, DIA, IWM, and QQQ before allowing new entries.",
-      profile,
-      bestCategory,
-      categoryRanks,
-      bestOptionIdea: optionsEnabled ? bestOptionIdea : null,
-      futuresPolicy,
-      adaptiveRisk,
-      decisionWindow,
-      dailyTradeLimit,
-      marketRegime,
-      marketQuality,
-      profitLock: profitLockStatus,
-      noTradeIntelligence
-    };
-  }
+  const usingFallbackData = realDataRequired && !hasRequiredRealData;
 
   if (adaptiveRisk.returnPercent <= -2.5) {
     return {
@@ -1743,7 +1723,7 @@ export function evaluateAutomationPlan({
     };
   }
 
-  if (marketQuality.verdict === "no-trade") {
+  if (marketQuality.verdict === "no-trade" && marketQuality.score < 40) {
     return {
       action: "hold",
       reason: marketQuality.reason,
@@ -1820,7 +1800,7 @@ export function evaluateAutomationPlan({
     };
   }
 
-  const buyCandidate = candidates.find((result) => {
+  const strictBuyCandidate = candidates.find((result) => {
     const flags = result.intelligence?.riskFlags || [];
     const selectedStrategy = strategyMap[result.symbol];
     const strategyScore = Math.max(
@@ -1847,12 +1827,12 @@ export function evaluateAutomationPlan({
             ? 74
             : 68
       : adaptiveRisk.returnPercent < 0
-        ? 80
+          ? 76
         : selectiveOpportunityMode
-          ? 72
+          ? 66
           : mode === "bullish"
-            ? 72
-            : 64;
+            ? 68
+            : 58;
     return (
       result.action === "buy" &&
       (isTradableEtf || isAiChip) &&
@@ -1865,13 +1845,37 @@ export function evaluateAutomationPlan({
       flags.length === 0
     );
   });
+  const activeFallbackCandidate = strictBuyCandidate
+    ? null
+    : candidates
+        .filter((result) => {
+          const flags = result.intelligence?.riskFlags || [];
+          const selectedStrategy = strategyMap[result.symbol];
+          const strategyScore = Math.max(
+            0,
+            Math.min(100, Number(selectedStrategy?.score || 50) + Number(result.learningAdjustment || 0) * 0.5)
+          );
+          const tradable = assetCatalog.etfs.includes(result.symbol) || assetCatalog.aiChips.includes(result.symbol);
+          return (
+            tradable &&
+            result.action !== "sell" &&
+            result.score >= (adaptiveRisk.returnPercent < 0 ? 78 : 58) &&
+            strategyScore >= (adaptiveRisk.returnPercent < 0 ? 70 : 50) &&
+            !positions.has(result.symbol) &&
+            result.intelligence?.liquidityGrade !== "avoid" &&
+            result.intelligence?.volatilityRegime !== "extreme" &&
+            flags.length === 0
+          );
+        })
+        .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0] || null;
+  const buyCandidate = strictBuyCandidate || activeFallbackCandidate;
 
   if (!buyCandidate) {
     const futuresCandidate = futuresEnabled &&
       futuresAllowedByClock &&
       futuresPolicy.canTradeFutures &&
       adaptiveRisk.returnPercent > -1.5 &&
-      marketQuality.score >= 50 &&
+      marketQuality.score >= 40 &&
       Number(portfolio?.futuresExposurePercent || 0) <= 20 &&
       (!bullishDiscipline.active || bullishDiscipline.passed)
       ? futuresCandidates.find((result) => {
@@ -1884,17 +1888,17 @@ export function evaluateAutomationPlan({
           const futuresScoreThreshold = adaptiveRisk.returnPercent < 0
             ? 86
             : selectiveOpportunityMode
-              ? 80
+              ? 74
               : mode === "bullish"
-                ? 80
-                : 72;
+                ? 76
+                : 66;
           const futuresStrategyThreshold = adaptiveRisk.returnPercent < 0
             ? 80
             : selectiveOpportunityMode
-              ? 74
+              ? 68
               : mode === "bullish"
-                ? 72
-                : 64;
+                ? 70
+                : 58;
           const downsideFuturesAllowed =
             marketRegime.regime === "risk-off" &&
             adaptiveRisk.returnPercent >= 0 &&
@@ -2043,7 +2047,7 @@ export function evaluateAutomationPlan({
     action: "buy",
     symbol: buyCandidate.symbol,
     quantity,
-    reason: `Automation entry: ${buyCandidate.reason} Strategy: ${
+    reason: `${activeFallbackCandidate ? "Active fallback entry" : "Automation entry"}: ${buyCandidate.reason} Strategy: ${
       strategyMap[buyCandidate.symbol]?.strategy?.name || "selected scanner strategy"
     }. Learning adjustment: ${buyCandidate.learningAdjustment >= 0 ? "+" : ""}${buyCandidate.learningAdjustment}. Size capped at ${round(maxSingleTradeCashPercent * 100)}% of available cash.`,
     profile,

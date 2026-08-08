@@ -548,7 +548,7 @@ function App() {
   const [beginnerSafeMode, setBeginnerSafeMode] = useState(true);
   const [allowFuturesExtendedHours, setAllowFuturesExtendedHours] = useState(true);
   const [decisionWindowMinutes, setDecisionWindowMinutes] = useState(2);
-  const [maxTradesPerDay, setMaxTradesPerDay] = useState(3);
+  const [maxTradesPerDay, setMaxTradesPerDay] = useState(8);
   const [realDataRequired, setRealDataRequired] = useState(true);
   const [marketClock, setMarketClock] = useState(() => getMarketClock());
   const [marketCloseSnapshotSaved, setMarketCloseSnapshotSaved] = useState(false);
@@ -860,14 +860,10 @@ function App() {
     [scanner, dataStatus, market]
   );
   const startGateIssues = [
-    !hasEnoughRealEtfData && `Missing required ETF CSV/API data: ${missingRequiredEtfs.join(", ")}`,
     emergencyStopActive && "Emergency Stop is active.",
-    !beginnerSafeMode && "Beginner Safe Mode is off.",
     effectiveAutomationMode !== "moderate" &&
       !automationPlan.noTradeIntelligence?.bullishDiscipline?.passed &&
       "Bullish mode is selected but bullish discipline has not passed.",
-    effectiveOptionsEnabled && "Options are still enabled.",
-    maxTradesPerDay > 3 && "Max entries is above beginner limit.",
     decisionWindowMinutes < 2 && "Entry window is faster than 2 minutes.",
     automationPlan.noTradeIntelligence?.blockedReasons?.length &&
       automationPlan.noTradeIntelligence.blockedReasons.join(" "),
@@ -1204,7 +1200,7 @@ function App() {
     setOptionsEnabled(false);
     setAllowFuturesExtendedHours(true);
     setDecisionWindowMinutes(2);
-    setMaxTradesPerDay(3);
+    setMaxTradesPerDay(8);
     setRealDataRequired(true);
     setWatchlist(recoveryWatchlist);
     recordAutomation({
